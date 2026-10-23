@@ -148,6 +148,9 @@ struct HomeView: View {
                         .foregroundStyle(Brand.inkDim)
                         .padding(.top, 2)
                 } else if let progress = featuredPhrases {
+                    Text("Two-hand piano version of the main theme, made from the film score.")
+                        .font(Brand.font(14))
+                        .foregroundStyle(Brand.inkDim)
                     PhraseProgress(total: progress.total, mastered: progress.mastered)
                 }
             }
