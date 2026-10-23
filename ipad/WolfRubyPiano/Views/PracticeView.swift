@@ -38,6 +38,7 @@ struct PracticeView: View {
     @Bindable var engine: PracticeEngine
     @Environment(\.dismiss) private var dismiss
     @State private var lessonToPlay: Lesson?
+    @State private var showingKeys = false
     private let midi = MIDIInput.shared
     private let sound = PianoSound.shared
 
@@ -61,6 +62,7 @@ struct PracticeView: View {
         .background(Brand.canvas)
         .onAppear(perform: connectInput)
         .sheet(item: $lessonToPlay) { LessonPlayerSheet(lesson: $0) }
+        .sheet(isPresented: $showingKeys, onDismiss: connectInput) { PianoKeySettingsView() }
         .onDisappear {
             engine.stop()
             midi.onNoteOn = nil
@@ -121,6 +123,8 @@ struct PracticeView: View {
                 Toggle("iPad plays the other hand", isOn: $engine.accompany)
                 Toggle("iPad plays my piano keys too", isOn: $engine.playMyKeys)
                 Toggle("Show note names", isOn: $engine.showNoteNames)
+                Divider()
+                Button { showingKeys = true } label: { Label("Piano key controls…", systemImage: "pianokeys") }
             } label: {
                 Image(systemName: "slider.horizontal.3").font(.system(size: 17, weight: .medium))
                     .frame(width: 44, height: 44)

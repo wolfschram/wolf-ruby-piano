@@ -20,9 +20,6 @@ struct SongEntry: Identifiable, Hashable {
 final class SongLibrary {
     static let shared = SongLibrary()
 
-    /// Wolf's main goal piece; shown first on the home screen.
-    static let featuredID = "morricone-west"
-
     private(set) var entries: [SongEntry] = []
     @ObservationIgnored private var cache: [String: Song] = [:]
 
@@ -80,10 +77,9 @@ final class SongLibrary {
         entries.filter { $0.category == category }
     }
 
-    /// An imported piano version of Wolf's piece wins over the bundled orchestra file.
+    /// Wolf's piece: an imported solo piano version of Once Upon a Time in the West, once he adds one.
     var featured: SongEntry? {
         entries.first { $0.category == .imported && $0.title.lowercased().contains("west") && !$0.isBandArrangement }
-            ?? entries.first { $0.id == Self.featuredID }
     }
 
     /// Copies a picked .mid file into the app so it stays available.

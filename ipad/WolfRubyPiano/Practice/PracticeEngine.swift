@@ -66,8 +66,6 @@ final class PracticeEngine {
         guard remaining > 0.02, remaining <= leadIn else { return nil }
         return min(3, max(1, Int((remaining / leadIn * 3).rounded(.up))))
     }
-    private let transportKeys: Set<Int> = [21, 22, 23, 107, 108]
-
     init(song: Song) {
         self.song = song
         self.phrases = song.phrases()
@@ -176,14 +174,14 @@ final class PracticeEngine {
     // MARK: - Input
 
     func noteOn(_ pitch: Int, velocity: Int, fromScreen: Bool) {
-        if !fromScreen, transportKeys.contains(pitch) { transport(pitch); return }
+        if !fromScreen, let action = KeyControls.shared.action(for: pitch) { perform(action); return }
         pressed.insert(pitch)
         if fromScreen || playMyKeys { PianoSound.shared.noteOn(pitch, velocity: velocity) }
         judge(pitch)
     }
 
     func noteOff(_ pitch: Int, fromScreen: Bool) {
-        if !fromScreen, transportKeys.contains(pitch) { return }
+        if !fromScreen, KeyControls.shared.action(for: pitch) != nil { return }
         pressed.remove(pitch)
         if fromScreen || playMyKeys { PianoSound.shared.noteOff(pitch) }
     }
@@ -193,14 +191,17 @@ final class PracticeEngine {
         if playMyKeys { PianoSound.shared.setSustain(down) }
     }
 
-    private func transport(_ pitch: Int) {
-        switch pitch {
-        case 21: togglePlay()                                    // A0
-        case 22: buildBackward.toggle()                          // A♯0
-        case 23: pause(); restartLoop()                          // B0
-        case 108: stepBack()                                     // C8
-        case 107: play()                                         // B7
-        default: break
+    func perform(_ action: PianoAction) {
+        switch action {
+        case .playPause: togglePlay()
+        case .restart: pause(); restartLoop()
+        case .stepBack: stepBack()
+        case .playFromHere: play()
+        case .buildBackward: buildBackward.toggle()
+        case .previousPhrase: selectPhrase(max(0, (selectedPhrase ?? currentPhrase ?? 0) - 1))
+        case .nextPhrase:
+            let next = (selectedPhrase ?? currentPhrase ?? -1) + 1
+            if phrases.indices.contains(next) { selectPhrase(next) }
         }
     }
 

@@ -31,6 +31,7 @@ struct HomeView: View {
     @State private var pairing = false
     @State private var importError: String?
     @State private var playingLesson: Lesson?
+    @State private var showingKeys = false
     @State private var featuredPhrases: (total: Int, mastered: Int)?
     private let library = SongLibrary.shared
     private let midi = MIDIInput.shared
@@ -41,7 +42,7 @@ struct HomeView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 32) {
                     header
-                    if let featured = library.featured { featuredCard(featured) }
+                    featuredCard(library.featured)
                     fingerGym
                     songShelf(title: "Film & classical", subtitle: "Piano pieces to grow into",
                               theme: .film, entries: library.entries(in: .wolf))
@@ -67,6 +68,7 @@ struct HomeView: View {
             BluetoothMIDIPairingView(onDone: { pairing = false })
         }
         .sheet(item: $playingLesson) { LessonPlayerSheet(lesson: $0) }
+        .sheet(isPresented: $showingKeys) { PianoKeySettingsView() }
         .alert("Import failed", isPresented: .constant(importError != nil)) {
             Button("OK") { importError = nil }
         } message: {
@@ -102,6 +104,8 @@ struct HomeView: View {
             case .failed: Button("Retry sound") { sound.start() }.buttonStyle(CompactButtonStyle())
             default: EmptyView()
             }
+            Button { showingKeys = true } label: { Label("Piano keys", systemImage: "pianokeys") }
+                .buttonStyle(CompactButtonStyle())
             Button { pairing = true } label: { Label("Bluetooth", systemImage: "dot.radiowaves.left.and.right") }
                 .buttonStyle(CompactButtonStyle())
             Button { importing = true } label: { Label("Import MIDI", systemImage: "square.and.arrow.down") }
@@ -111,15 +115,26 @@ struct HomeView: View {
 
     // MARK: - Your piece
 
-    private func featuredCard(_ entry: SongEntry) -> some View {
+    /// Original 1968 film poster (Wikipedia), loaded at runtime for Wolf's personal use.
+    static let posterURL = URL(string: "https://upload.wikimedia.org/wikipedia/en/a/a2/Once_upon_a_Time_in_the_West.jpg")
+
+    /// Best-rated solo piano arrangement found (Islam Albakov, MuseScore).
+    static let pianoVersionURL = URL(string: "https://musescore.com/user/3270391/scores/5421927")!
+
+    private func featuredCard(_ entry: SongEntry?) -> some View {
         let theme = SectionTheme.piece
         return HStack(alignment: .center, spacing: 24) {
-            SunsetArt()
-                .frame(width: 150, height: 150)
-                .clipShape(RoundedRectangle(cornerRadius: Brand.rCard))
+            AsyncImage(url: Self.posterURL) { image in
+                image.resizable().aspectRatio(contentMode: .fill)
+            } placeholder: {
+                SunsetArt()
+            }
+            .frame(width: 124, height: 186)
+            .clipShape(RoundedRectangle(cornerRadius: Brand.rCard))
+            .overlay(RoundedRectangle(cornerRadius: Brand.rCard).stroke(Brand.gold.opacity(0.4), lineWidth: 1))
             VStack(alignment: .leading, spacing: 8) {
                 Text("\(greeting), Wolf · your piece").font(Brand.font(13, .semibold)).foregroundStyle(theme.accent)
-                Text(entry.title)
+                Text("Once Upon a Time in the West")
                     .font(Brand.font(34, .heavy))
                     .tracking(-0.6)
                     .foregroundStyle(Brand.ink)
@@ -127,21 +142,34 @@ struct HomeView: View {
                 Text("Ennio Morricone · Sergio Leone, 1968")
                     .font(Brand.font(15))
                     .foregroundStyle(Brand.inkDim)
-                if entry.isBandArrangement {
-                    Label("This file is the orchestra version. Import a solo piano version and it takes this spot.",
-                          systemImage: "exclamationmark.circle")
-                        .font(Brand.font(13, .medium))
-                        .foregroundStyle(Brand.warn)
+                if entry == nil {
+                    Text("Add a solo piano version: download the MIDI from MuseScore, then Import MIDI. It lands here.")
+                        .font(Brand.font(14))
+                        .foregroundStyle(Brand.inkDim)
+                        .padding(.top, 2)
                 } else if let progress = featuredPhrases {
                     PhraseProgress(total: progress.total, mastered: progress.mastered)
                 }
             }
             Spacer(minLength: 12)
-            Button { path.append(entry) } label: {
-                Label(featuredPhrases?.mastered ?? 0 > 0 ? "Continue" : "Start", systemImage: "play.fill")
-                    .frame(minWidth: 110)
+            if let entry {
+                Button { path.append(entry) } label: {
+                    Label(featuredPhrases?.mastered ?? 0 > 0 ? "Continue" : "Start", systemImage: "play.fill")
+                        .frame(minWidth: 110)
+                }
+                .buttonStyle(PrimaryButtonStyle())
+            } else {
+                VStack(alignment: .trailing, spacing: 8) {
+                    Button { importing = true } label: {
+                        Label("Import MIDI", systemImage: "square.and.arrow.down").frame(minWidth: 130)
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    Link(destination: Self.pianoVersionURL) {
+                        Label("Piano version on MuseScore", systemImage: "arrow.up.right")
+                    }
+                    .buttonStyle(CompactButtonStyle())
+                }
             }
-            .buttonStyle(PrimaryButtonStyle())
         }
         .padding(20)
         .background(theme.tint, in: RoundedRectangle(cornerRadius: Brand.rPanel))
@@ -274,8 +302,23 @@ private struct SongTile: View {
     var body: some View {
         let mastered = PracticeProgress.masteredCount(songID: entry.id)
         VStack(alignment: .leading, spacing: 0) {
-            CoverArt(seed: entry.title, accent: theme.accent, symbol: symbol)
-                .frame(height: 86)
+            Group {
+                if let cover = CoverImages.bySongID[entry.id] {
+                    AsyncImage(url: cover.url, transaction: Transaction(animation: .easeOut(duration: 0.26))) { phase in
+                        if let image = phase.image {
+                            image.resizable().aspectRatio(contentMode: .fill)
+                        } else {
+                            CoverArt(seed: entry.title, accent: theme.accent, symbol: symbol)
+                        }
+                    }
+                    .accessibilityLabel(cover.credit)
+                } else {
+                    CoverArt(seed: entry.title, accent: theme.accent, symbol: symbol)
+                }
+            }
+            .frame(height: 110)
+            .frame(maxWidth: .infinity)
+            .clipped()
             VStack(alignment: .leading, spacing: 4) {
                 Text(entry.title)
                     .font(Brand.font(15, .semibold))
