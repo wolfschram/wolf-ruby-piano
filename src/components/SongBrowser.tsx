@@ -130,8 +130,13 @@ export const SongBrowser: React.FC<SongBrowserProps> = ({
         return;
       }
 
+      if (song.notes.length > 2000) {
+        flash(`Added "${song.title}" (${song.notes.length} notes - this is a large file, may be slow)`);
+      } else {
+        flash(`Added "${song.title}" (${song.notes.length} notes, ${formatDuration(song.durationMs)})`);
+      }
+
       onImportSong(song);
-      flash(`Added "${song.title}" (${song.notes.length} notes, ${formatDuration(song.durationMs)})`);
     } catch (err: any) {
       console.error('Download failed:', err);
       flash(`Download failed: ${err.message}`);
@@ -195,16 +200,17 @@ export const SongBrowser: React.FC<SongBrowserProps> = ({
       </div>
 
       {/* Tab switcher */}
-      <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', gap: 2, borderRadius: 8, overflow: 'hidden', backgroundColor: '#1A1A2E', padding: 2 }}>
         {(['library', 'find'] as const).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
             style={{
-              flex: 1, padding: '8px 0', border: 'none',
-              fontSize: 13, fontWeight: tab === t ? 700 : 400, cursor: 'pointer',
-              backgroundColor: tab === t ? accent : '#1A1A2E',
-              color: tab === t ? '#FFF' : '#888',
+              flex: 1, padding: '10px 12px', border: 'none', borderRadius: 6,
+              fontSize: 13, fontWeight: tab === t ? 700 : 500, cursor: 'pointer',
+              backgroundColor: tab === t ? accent : 'transparent',
+              color: tab === t ? '#FFF' : '#777',
+              transition: 'all 0.15s ease',
             }}
           >
             {t === 'library' ? 'My Songs' : 'Search Online (113k+)'}
@@ -226,6 +232,7 @@ export const SongBrowser: React.FC<SongBrowserProps> = ({
       {/* =================== MY SONGS TAB =================== */}
       {tab === 'library' && (
         <>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
           <input
             type="text" placeholder="Search your songs..."
             value={search} onChange={(e) => setSearch(e.target.value)}
@@ -323,6 +330,18 @@ export const SongBrowser: React.FC<SongBrowserProps> = ({
               {onlineLoading ? 'Searching...' : 'Search'}
             </button>
           </div>
+
+          {/* Loading spinner */}
+          {onlineLoading && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px 0', gap: 12 }}>
+              <div style={{
+                width: 28, height: 28, border: `3px solid #333`,
+                borderTop: `3px solid ${accent}`, borderRadius: '50%',
+                animation: 'spin 0.8s linear infinite',
+              }} />
+              <span style={{ color: '#888', fontSize: 14 }}>Searching BitMidi...</span>
+            </div>
+          )}
 
           {/* Quick search suggestions */}
           {onlineResults.length === 0 && !onlineLoading && !onlineError && (

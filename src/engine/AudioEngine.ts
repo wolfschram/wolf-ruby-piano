@@ -53,6 +53,11 @@ class AudioEngine {
   private samplesLoaded = false;
   private loadingPromise: Promise<void> | null = null;
 
+  // Sustain pedal state
+  private _sustainActive = false;
+  private sustainedNotes: Set<number> = new Set(); // notes held by pedal after key release
+  private activeNotes: Set<number> = new Set();    // notes currently held by keys
+
   /**
    * Initialize audio. Must be called after a user gesture (click/keypress)
    * because browsers block autoplay.
@@ -132,6 +137,8 @@ class AudioEngine {
     const noteName = Tone.Frequency(midiNote, 'midi').toNote();
     const vel = Math.max(0.01, Math.min(1, velocity / 127));
 
+    this.activeNotes.add(midiNote);
+    this.sustainedNotes.delete(midiNote); // re-struck note is no longer pedal-sustained
     this.sampler.triggerAttack(noteName, undefined, vel);
   }
 
@@ -141,8 +148,42 @@ class AudioEngine {
   noteOff(midiNote: number): void {
     if (!this.sampler || !this.initialized || !this.samplesLoaded) return;
 
+    this.activeNotes.delete(midiNote);
+
+    if (this._sustainActive) {
+      // Pedal is down — hold the note, release when pedal lifts
+      this.sustainedNotes.add(midiNote);
+      return;
+    }
+
     const noteName = Tone.Frequency(midiNote, 'midi').toNote();
     this.sampler.triggerRelease(noteName);
+  }
+
+  /**
+   * Set sustain pedal state. CC64: value >= 64 = on, < 64 = off.
+   * When pedal lifts, release all notes that were being held by sustain.
+   */
+  setSustain(active: boolean): void {
+    this._sustainActive = active;
+
+    if (!active && this.sampler) {
+      // Pedal lifted — release all pedal-sustained notes that aren't still held by keys
+      for (const midiNote of this.sustainedNotes) {
+        if (!this.activeNotes.has(midiNote)) {
+          const noteName = Tone.Frequency(midiNote, 'midi').toNote();
+          this.sampler.triggerRelease(noteName);
+        }
+      }
+      this.sustainedNotes.clear();
+    }
+  }
+
+  /**
+   * Whether the sustain pedal is currently active.
+   */
+  get sustainActive(): boolean {
+    return this._sustainActive;
   }
 
   /**
@@ -151,6 +192,9 @@ class AudioEngine {
   stopAll(): void {
     if (!this.sampler) return;
     this.sampler.releaseAll();
+    this.activeNotes.clear();
+    this.sustainedNotes.clear();
+    this._sustainActive = false;
   }
 
   /**

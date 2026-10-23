@@ -15,6 +15,7 @@ interface FallingNotesProps {
   endNote?: number;
   waitingNoteIndex?: number;
   hitNotes?: Set<number>;
+  userNoteVelocities?: Map<number, number>; // noteIndex -> velocity mapping
   onReady?: () => void;
 }
 
@@ -24,6 +25,18 @@ const WOLF_RIGHT = '#CC8833';
 const WOLF_HIT_LINE = '#FFFFFF20';
 const BG_WOLF = '#0A0A12';
 const BG_RUBY = '#0A0A12';
+
+/**
+ * Get velocity tint color based on MIDI velocity (0-127).
+ * - Too soft (<40) = blue tint
+ * - Good (40-100) = green tint
+ * - Too hard (>100) = red tint
+ */
+function getVelocityTint(velocity: number): string {
+  if (velocity < 40) return '#4488FF'; // Blue
+  if (velocity <= 100) return '#44FF88'; // Green
+  return '#FF6644'; // Red
+}
 
 /**
  * FallingNotes — Canvas-based 60fps falling note renderer.
@@ -45,6 +58,7 @@ export const FallingNotes: React.FC<FallingNotesProps> = ({
   endNote = 96,
   waitingNoteIndex,
   hitNotes = new Set(),
+  userNoteVelocities = new Map(),
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dprRef = useRef(window.devicePixelRatio || 1);
@@ -101,16 +115,22 @@ export const FallingNotes: React.FC<FallingNotesProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // Guard against invalid dimensions
+    if (width <= 0 || height <= 0) return;
+
+    try {
+
     const dpr = dprRef.current;
+    const safeHeight = Math.max(height, 100);
     canvas.width = width * dpr;
-    canvas.height = height * dpr;
+    canvas.height = safeHeight * dpr;
     ctx.scale(dpr, dpr);
 
     // Clear
     ctx.fillStyle = mode === 'wolf' ? BG_WOLF : BG_RUBY;
-    ctx.fillRect(0, 0, width, height);
+    ctx.fillRect(0, 0, width, safeHeight);
 
-    const hitLineY = height - HIT_LINE_Y_OFFSET;
+    const hitLineY = safeHeight - HIT_LINE_Y_OFFSET;
     const pxPerMs = (hitLineY) / LOOKAHEAD_MS;
 
     // Draw hit line
@@ -123,14 +143,17 @@ export const FallingNotes: React.FC<FallingNotesProps> = ({
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Filter notes by hand
-    const filtered = handFilter === 'both'
-      ? notes
-      : notes.filter(n => n.hand === handFilter);
+    // Draw visible notes — iterate original array to preserve indices
+    // (avoids O(n) indexOf calls that were freezing the app on large files)
+    const MAX_VISIBLE_NOTES = 500;
+    let visibleCount = 0;
 
-    // Draw visible notes
-    for (let i = 0; i < filtered.length; i++) {
-      const note = filtered[i];
+    for (let i = 0; i < notes.length; i++) {
+      const note = notes[i];
+
+      // Filter by hand
+      if (handFilter !== 'both' && note.hand !== handFilter) continue;
+
       const relativeStart = note.startTime - currentTimeMs;
       const relativeEnd = relativeStart + note.duration;
 
@@ -143,8 +166,15 @@ export const FallingNotes: React.FC<FallingNotesProps> = ({
       const noteBottomY = hitLineY - relativeStart * pxPerMs;
       const noteH = Math.max(noteBottomY - noteTopY, mode === 'ruby' ? 20 : 8);
 
-      // Get X position — both modes use the same full piano layout
-      const keyPos = getKeyX(note.pitch);
+      // Get X position — Ruby uses simplified key layout, Wolf uses full piano
+      let keyPos: { x: number; w: number };
+      if (mode === 'ruby') {
+        const rubyPos = getRubyKeyX(note.pitch);
+        if (!rubyPos) continue; // Note not in current Ruby level — skip it
+        keyPos = rubyPos;
+      } else {
+        keyPos = getKeyX(note.pitch);
+      }
 
       const noteX = keyPos.x + 2;
       const noteW = keyPos.w - 4;
@@ -158,13 +188,12 @@ export const FallingNotes: React.FC<FallingNotesProps> = ({
         color = note.hand === 'left' ? WOLF_LEFT : WOLF_RIGHT;
       }
 
-      // Is this note currently at the hit line?
+      // Use loop index directly — O(1) instead of O(n) indexOf
+      const noteIdx = i;
       const isAtHitLine = relativeStart <= 0 && relativeEnd >= 0;
-      // Is this note the one we're waiting for?
-      const isWaiting = waitingNoteIndex !== undefined &&
-        notes.indexOf(note) === waitingNoteIndex;
-      // Was this note already hit?
-      const wasHit = hitNotes.has(notes.indexOf(note));
+      const isWaiting = waitingNoteIndex !== undefined && noteIdx === waitingNoteIndex;
+      const wasHit = hitNotes.has(noteIdx);
+      const userVelocity = userNoteVelocities.get(noteIdx);
 
       // Draw the note block
       ctx.save();
@@ -187,15 +216,65 @@ export const FallingNotes: React.FC<FallingNotesProps> = ({
       ctx.fillStyle = color;
       ctx.fill();
 
-      // Ruby mode: draw emoji inside
-      if (mode === 'ruby' && noteH > 30) {
-        ctx.globalAlpha = wasHit ? 0.3 : 1;
+      // Velocity visualization: subtle colored border around hit notes
+      if (wasHit && userVelocity !== undefined) {
+        const velocityColor = getVelocityTint(userVelocity);
+        ctx.save();
+        ctx.globalAlpha = 0.7;
+        ctx.strokeStyle = velocityColor;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(noteX + 1, noteTopY + 1, noteW - 2, noteH - 2, radius);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Ruby mode: draw emoji + hand indicator
+      if (mode === 'ruby') {
         ctx.shadowBlur = 0;
-        const emoji = getAnimalEmoji(midiToNoteName(note.pitch));
-        ctx.font = `${Math.min(noteH - 10, 32)}px serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(emoji, noteX + noteW / 2, noteTopY + noteH / 2);
+
+        // Hand indicator: colored side stripe + L/R badge
+        const handColor = note.hand === 'left' ? '#3366BB' : '#CC8833';
+        const handLabel = note.hand === 'left' ? 'L' : 'R';
+
+        // Side stripe (4px colored bar on left edge of note)
+        ctx.save();
+        ctx.globalAlpha = wasHit ? 0.2 : 0.9;
+        ctx.fillStyle = handColor;
+        ctx.beginPath();
+        ctx.roundRect(noteX, noteTopY, 5, noteH, [radius, 0, 0, radius]);
+        ctx.fill();
+        ctx.restore();
+
+        // L/R badge at top of note
+        if (noteH > 18) {
+          ctx.save();
+          ctx.globalAlpha = wasHit ? 0.3 : 1;
+          const badgeSize = Math.min(18, noteW * 0.4);
+          const badgeX = noteX + noteW - badgeSize - 2;
+          const badgeY = noteTopY + 3;
+          ctx.fillStyle = handColor;
+          ctx.beginPath();
+          ctx.arc(badgeX + badgeSize / 2, badgeY + badgeSize / 2, badgeSize / 2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#FFF';
+          ctx.font = `bold ${Math.round(badgeSize * 0.65)}px system-ui`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(handLabel, badgeX + badgeSize / 2, badgeY + badgeSize / 2 + 1);
+          ctx.restore();
+        }
+
+        // Animal emoji (centered, below badge)
+        if (noteH > 30) {
+          ctx.globalAlpha = wasHit ? 0.3 : 1;
+          const emoji = getAnimalEmoji(midiToNoteName(note.pitch));
+          const emojiY = noteH > 50 ? noteTopY + noteH / 2 + 6 : noteTopY + noteH / 2;
+          ctx.font = `${Math.min(noteH - 16, 28)}px serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(emoji, noteX + noteW / 2, emojiY);
+        }
       }
 
       // Pulsing border for waiting note
@@ -208,6 +287,10 @@ export const FallingNotes: React.FC<FallingNotesProps> = ({
       }
 
       ctx.restore();
+
+      // Increment visible count and break if we've hit the limit
+      visibleCount++;
+      if (visibleCount >= MAX_VISIBLE_NOTES) break;
     }
 
     // Draw sparkle particles for recently hit notes (Ruby mode)
@@ -215,15 +298,20 @@ export const FallingNotes: React.FC<FallingNotesProps> = ({
       drawSparkles(ctx, width, height, hitLineY);
     }
 
-  }, [notes, currentTimeMs, mode, handFilter, width, height, startNote, endNote,
-      speedMultiplier, waitingNoteIndex, hitNotes, getKeyX]);
+    } catch (err) {
+      console.error('[FallingNotes] Canvas render error:', err);
+    }
 
+  }, [notes, currentTimeMs, mode, handFilter, width, height, startNote, endNote,
+      speedMultiplier, waitingNoteIndex, hitNotes, userNoteVelocities, getKeyX, getRubyKeyX, rubyLevel]);
+
+  const safeHeight = Math.max(height, 100);
   return (
     <canvas
       ref={canvasRef}
       style={{
         width,
-        height,
+        height: safeHeight,
         display: 'block',
       }}
     />

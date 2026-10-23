@@ -1,0 +1,226 @@
+[
+ {
+  "file": "hot-cross-buns.mid",
+  "title": "Hot Cross Buns",
+  "artist": "Traditional",
+  "difficulty": 1,
+  "category": "ruby"
+ },
+ {
+  "file": "twinkle-twinkle.mid",
+  "title": "Twinkle Twinkle Little Star",
+  "artist": "Traditional",
+  "difficulty": 1,
+  "category": "ruby"
+ },
+ {
+  "file": "mary-had-a-little-lamb.mid",
+  "title": "Mary Had a Little Lamb",
+  "artist": "Traditional",
+  "difficulty": 1,
+  "category": "ruby"
+ },
+ {
+  "file": "baa-baa-black-sheep-midi.mid",
+  "title": "Baa Baa Black Sheep",
+  "artist": "Traditional",
+  "difficulty": 1,
+  "category": "ruby"
+ },
+ {
+  "file": "row-row-row-your-boat-midi.mid",
+  "title": "Row Row Row Your Boat",
+  "artist": "Traditional",
+  "difficulty": 1,
+  "category": "ruby"
+ },
+ {
+  "file": "old-macdonald-had-a-farm-midi.mid",
+  "title": "Old MacDonald Had a Farm",
+  "artist": "Traditional",
+  "difficulty": 1,
+  "category": "ruby"
+ },
+ {
+  "file": "wheels-on-the-bus-midi.mid",
+  "title": "The Wheels on the Bus",
+  "artist": "Traditional",
+  "difficulty": 1,
+  "category": "ruby"
+ },
+ {
+  "file": "pop-goes-the-weasel-midi.mid",
+  "title": "Pop Goes the Weasel",
+  "artist": "Traditional",
+  "difficulty": 1,
+  "category": "ruby"
+ },
+ {
+  "file": "humpty-dumpty-midi.mid",
+  "title": "Humpty Dumpty",
+  "artist": "Traditional",
+  "difficulty": 1,
+  "category": "ruby"
+ },
+ {
+  "file": "happy-birthday-piano-easy.mid",
+  "title": "Happy Birthday",
+  "artist": "Traditional",
+  "difficulty": 1,
+  "category": "ruby"
+ },
+ {
+  "file": "ode-to-joy-easy.mid",
+  "title": "Ode to Joy",
+  "artist": "Beethoven",
+  "difficulty": 2,
+  "category": "ruby"
+ },
+ {
+  "file": "jingle-bells.mid",
+  "title": "Jingle Bells",
+  "artist": "Traditional",
+  "difficulty": 2,
+  "category": "ruby"
+ },
+ {
+  "file": "abc-alphabet-song-midi.mid",
+  "title": "ABC Song",
+  "artist": "Traditional",
+  "difficulty": 1,
+  "category": "ruby"
+ },
+ {
+  "file": "head-shoulders-knees-toes-midi.mid",
+  "title": "Head Shoulders Knees & Toes",
+  "artist": "Traditional",
+  "difficulty": 1,
+  "category": "ruby"
+ },
+ {
+  "file": "brahms-lullaby-piano-midi.mid",
+  "title": "Brahms' Lullaby",
+  "artist": "Johannes Brahms",
+  "difficulty": 2,
+  "category": "ruby"
+ },
+ {
+  "file": "yankee-doodle-midi.mid",
+  "title": "Yankee Doodle",
+  "artist": "Traditional",
+  "difficulty": 2,
+  "category": "ruby"
+ },
+ {
+  "file": "morricone-west.mid",
+  "title": "Once Upon a Time in the West",
+  "artist": "Ennio Morricone",
+  "difficulty": 3,
+  "category": "wolf"
+ },
+ {
+  "file": "cinema-paradiso-morricone-piano.mid",
+  "title": "Cinema Paradiso",
+  "artist": "Ennio Morricone",
+  "difficulty": 3,
+  "category": "wolf"
+ },
+ {
+  "file": "ecstasy-of-gold.mid",
+  "title": "The Ecstasy of Gold",
+  "artist": "Ennio Morricone",
+  "difficulty": 4,
+  "category": "wolf"
+ },
+ {
+  "file": "gabriels-oboe-morricone.mid",
+  "title": "Gabriel's Oboe",
+  "artist": "Ennio Morricone",
+  "difficulty": 3,
+  "category": "wolf"
+ },
+ {
+  "file": "schindlers-list-piano.mid",
+  "title": "Schindler's List Theme",
+  "artist": "John Williams",
+  "difficulty": 3,
+  "category": "wolf"
+ },
+ {
+  "file": "fur-elise-beethoven-piano.mid",
+  "title": "Für Elise",
+  "artist": "Beethoven",
+  "difficulty": 3,
+  "category": "wolf"
+ },
+ {
+  "file": "moonlight-sonata.mid",
+  "title": "Moonlight Sonata",
+  "artist": "Beethoven",
+  "difficulty": 4,
+  "category": "wolf"
+ },
+ {
+  "file": "river-flows-in-you.mid",
+  "title": "River Flows in You",
+  "artist": "Yiruma",
+  "difficulty": 3,
+  "category": "wolf"
+ },
+ {
+  "file": "clair-de-lune-debussy.mid",
+  "title": "Clair de Lune",
+  "artist": "Claude Debussy",
+  "difficulty": 4,
+  "category": "wolf"
+ },
+ {
+  "file": "gymnopedie-satie.mid",
+  "title": "Gymnopédie No.1",
+  "artist": "Erik Satie",
+  "difficulty": 2,
+  "category": "wolf"
+ },
+ {
+  "file": "chopin-nocturne-op9.mid",
+  "title": "Nocturne Op.9 No.2",
+  "artist": "Frédéric Chopin",
+  "difficulty": 4,
+  "category": "wolf"
+ },
+ {
+  "file": "gladiator-now-we-are-free.mid",
+  "title": "Now We Are Free (Gladiator)",
+  "artist": "Hans Zimmer",
+  "difficulty": 3,
+  "category": "wolf"
+ },
+ {
+  "file": "godfather-waltz-piano-midi.mid",
+  "title": "The Godfather Waltz",
+  "artist": "Nino Rota",
+  "difficulty": 3,
+  "category": "wolf"
+ },
+ {
+  "file": "morricone-westerns-medley.mid",
+  "title": "Morricone Westerns Medley",
+  "artist": "Ennio Morricone",
+  "difficulty": 4,
+  "category": "wolf"
+ },
+ {
+  "file": "itsy-bitsy-spider-midi.mid",
+  "title": "Itsy Bitsy Spider",
+  "artist": "Traditional",
+  "difficulty": 1,
+  "category": "ruby"
+ },
+ {
+  "file": "interstellar-zimmer.mid",
+  "title": "Interstellar",
+  "artist": "Hans Zimmer",
+  "difficulty": 3,
+  "category": "wolf"
+ }
+]

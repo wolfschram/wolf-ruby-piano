@@ -4,6 +4,7 @@
  */
 
 export type MidiNoteCallback = (note: number, velocity: number) => void;
+export type MidiCCCallback = (cc: number, value: number) => void;
 
 export interface MidiDeviceInfo {
   id: string;
@@ -16,6 +17,7 @@ class MidiInput {
   private currentInput: MIDIInput | null = null;
   private onNoteOn: MidiNoteCallback | null = null;
   private onNoteOff: MidiNoteCallback | null = null;
+  private onControlChange: MidiCCCallback | null = null;
   private onConnectionChange: ((connected: boolean, device?: MidiDeviceInfo) => void) | null = null;
   private _connected = false;
   private _deviceInfo: MidiDeviceInfo | null = null;
@@ -43,10 +45,12 @@ class MidiInput {
   setCallbacks(opts: {
     onNoteOn?: MidiNoteCallback;
     onNoteOff?: MidiNoteCallback;
+    onControlChange?: MidiCCCallback;
     onConnectionChange?: (connected: boolean, device?: MidiDeviceInfo) => void;
   }): void {
     if (opts.onNoteOn) this.onNoteOn = opts.onNoteOn;
     if (opts.onNoteOff) this.onNoteOff = opts.onNoteOff;
+    if (opts.onControlChange) this.onControlChange = opts.onControlChange;
     if (opts.onConnectionChange) this.onConnectionChange = opts.onConnectionChange;
   }
 
@@ -99,6 +103,9 @@ class MidiInput {
     } else if (command === 0x80 || (command === 0x90 && velocity === 0)) {
       // Note Off
       this.onNoteOff?.(note, 0);
+    } else if (command === 0xb0) {
+      // Control Change (CC) — note = CC number, velocity = CC value
+      this.onControlChange?.(note, velocity);
     }
   };
 

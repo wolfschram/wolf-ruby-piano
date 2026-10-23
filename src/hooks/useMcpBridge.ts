@@ -8,17 +8,6 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { PlaybackState, Song } from '../types';
 
-// Type-safe access to the electronAPI
-declare global {
-  interface Window {
-    electronAPI?: {
-      mcpUpdateState?: (state: Record<string, unknown>) => void;
-      mcpNoteEvent?: (event: { note: number; velocity: number; type: 'on' | 'off' }) => void;
-      onMcpCommand?: (callback: (cmd: { action: string; params: Record<string, unknown> }) => void) => void;
-    };
-  }
-}
-
 interface McpBridgeOptions {
   mode: 'wolf' | 'ruby';
   currentSong: Song | null;
@@ -94,9 +83,10 @@ export function useMcpBridge(opts: McpBridgeOptions): {
   // Listen for commands from MCP
   useEffect(() => {
     if (!api?.onMcpCommand || !opts.onCommand) return;
-    api.onMcpCommand((cmd) => {
+    const cleanup = api.onMcpCommand((cmd) => {
       opts.onCommand?.(cmd.action, cmd.params);
     });
+    return cleanup; // Remove listener on re-render or unmount
   }, [opts.onCommand]);
 
   // Note event reporters

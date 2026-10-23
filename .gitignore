@@ -4,3 +4,9 @@ release/
 *.log
 .DS_Store
 .env
+ipad/build/
+octoally/
+.claude-flow/
+.swarm/
+.claude/
+.mcp.json

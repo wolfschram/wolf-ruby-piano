@@ -48,14 +48,16 @@ src/
     WolfMode.tsx             # Adult mode: hand separation, 3 modes, transport keys
     RubyMode.tsx             # Child mode: animals, levels 1-4, encouragement
   songs/
-    library.ts               # 12 built-in songs (6 ruby + 6 wolf)
+    library.ts               # 24 built-in songs (14 ruby + 10 wolf)
     built-in/*.mid           # 9 MIDI source files (not loaded — library.ts uses programmatic arrays)
   animals/animal-map.ts      # Note → animal emoji/color mapping, level definitions
+  engine/
+    PracticeTracker.ts       # Spaced repetition + mastery tracking + section heatmap
 electron/
-  main.ts                    # Window, IPC handlers, HTTP bridge (:9876), file system
-  preload.ts                 # Context isolation bridge (electronAPI)
+  main.ts                    # Window, IPC handlers, HTTP bridge (:9876), file system, token auth
+  preload.ts                 # Context isolation bridge (electronAPI, Ruby/Wolf persistence)
 mcp-server/
-  src/index.ts               # 4 MCP tools for Claude (piano_get_state, etc.)
+  src/index.ts               # 6 MCP tools for Claude (piano_get_state, etc.) + token auth
 ```
 
 ## Architectural Patterns
@@ -67,14 +69,19 @@ mcp-server/
 - **Song persistence**: imported songs saved to Electron userData/library.json, reloaded on launch
 
 ## MIDI Transport Key Map
-| Key | MIDI | Position | Action |
-|-----|------|----------|--------|
-| A0  | 21   | Leftmost white key | Play / Pause toggle |
-| B0  | 23   | 2nd white from left | Stop & Rewind (visual reset) |
-| C8  | 108  | Rightmost white key | Step back one note |
-| B7  | 107  | 2nd white from right | Play from current position |
+| Key  | MIDI | Position | Action |
+|------|------|----------|--------|
+| A0   | 21   | Leftmost white key | Play / Pause toggle |
+| A#0  | 22   | 1st black key from left | Toggle Backward Chain mode |
+| B0   | 23   | 2nd white from left | Stop & Rewind (visual reset) |
+| C8   | 108  | Rightmost white key | Step back one note |
+| B7   | 107  | 2nd white from right | Play from current position |
 
-These transport keys let Wolf practice without ever touching the mouse. Step-back + play-from-here creates a retry loop for memorizing passages.
+These transport keys let Wolf practice without ever touching the mouse. Step-back + play-from-here creates a retry loop for memorizing passages. Backward Chain mode practices from the END of a phrase backward — each rep ends in success (ADHD dopamine reward loop).
+
+## MIDI CC Support
+- **CC64 (Sustain Pedal)**: Fully supported. Value ≥64 = pedal down, <64 = pedal up. Notes held by pedal sustain until pedal lifts. Visual "SUS" indicator in HUD.
+- **All other CCs**: Routed through onControlChange callback for future use (velocity coaching, etc.)
 
 ## Song Import Pipeline
 1. **File picker**: "Import MIDI" button → native file dialog for .mid/.midi
@@ -122,13 +129,14 @@ index.html allows:
 
 ## Known Gaps
 - Built-in .mid files in songs/built-in/ NOT loaded (library.ts uses programmatic arrays instead)
-- BitMidi search returns first page only (15 results, no pagination)
-- No sustain pedal support (CC64 MIDI messages ignored)
-- MCP piano_transport tool not fully connected end-to-end
-- Ruby song library too small (6 songs, needs 50-100+)
+- BitMidi search returns first page only (results per page, no pagination)
+- Bar-based looping UI exists (LoopControl) but not wired to PlaybackEngine
+- Ruby narrative gamification not yet implemented (story wrapper, micro-sessions, animated animals)
+- PracticeTracker not yet wired into WolfMode UI (engine ready, needs UI integration)
 - No song deletion from library
-- No progress tracking dashboard (time spent, accuracy trends)
 - No note labels toggle on piano keys
+- No velocity coaching visualization (velocity data captured but only used for audio volume)
+- iPad conversion planned for future (React + TypeScript + Tone.js = PWA/Capacitor path)
 
 ## MCP Server Tools
 1. `piano_get_state` — mode, song, playback, MIDI status, active notes

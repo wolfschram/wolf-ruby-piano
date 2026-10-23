@@ -1,19 +1,54 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, Component, ReactNode } from 'react';
 import { Song, AppMode } from './types';
 import WolfMode from './modes/WolfMode';
 import RubyMode from './modes/RubyMode';
-import { getBuiltInSongs } from './songs/library';
+import { getBuiltInSongs, loadMidiLibrary } from './songs/library';
+
+// Root error boundary — NEVER show black screen
+class AppErrorBoundary extends Component<{ children: ReactNode; onReset: () => void }, { hasError: boolean; error: string }> {
+  state = { hasError: false, error: '' };
+  static getDerivedStateFromError(err: Error) { return { hasError: true, error: err.message }; }
+  componentDidCatch(err: Error, info: React.ErrorInfo) { console.error('[AppErrorBoundary]', err, info.componentStack); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#0A0A12', color: '#EEE', fontFamily: 'system-ui' }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🎹</div>
+          <h2 style={{ color: '#CC8833', fontSize: 20, margin: 0 }}>Something crashed</h2>
+          <p style={{ color: '#888', fontSize: 14, maxWidth: 500, textAlign: 'center', margin: '12px 0' }}>{this.state.error}</p>
+          <button onClick={() => { this.setState({ hasError: false, error: '' }); this.props.onReset(); }}
+            style={{ padding: '12px 28px', borderRadius: 8, border: 'none', backgroundColor: '#CC8833', color: '#FFF', fontSize: 14, fontWeight: 600, cursor: 'pointer', marginTop: 12 }}>
+            ← Back to Home
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const electronAPI = (window as any).electronAPI;
+
+// Global safety net — catch ALL uncaught errors so the app never goes black
+if (typeof window !== 'undefined') {
+  window.addEventListener('error', (e) => {
+    console.error('[GLOBAL] Uncaught error:', e.error ?? e.message);
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    console.error('[GLOBAL] Unhandled rejection:', e.reason);
+  });
+}
 
 const App: React.FC = () => {
   const [mode, setMode] = useState<AppMode | null>(null);
   const [songs, setSongs] = useState<Song[]>([]);
 
-  // Load built-in songs + any previously imported songs from disk
+  // Phase 1: Load hand-coded fallback songs instantly (sync)
+  // Phase 2: Load real MIDI files from public/midi/ (async, replaces fallbacks)
   useEffect(() => {
     const load = async () => {
-      const builtIn = getBuiltInSongs();
+      // Instant: hand-coded starter songs so UI is never empty
+      const fallback = getBuiltInSongs();
       let imported: Song[] = [];
 
       try {
@@ -28,7 +63,42 @@ const App: React.FC = () => {
         console.error('[App] Failed to load library:', err);
       }
 
-      setSongs([...builtIn, ...imported]);
+      // Show fallback songs immediately
+      setSongs([...fallback, ...imported]);
+
+      // Then async-load real MIDI files and merge with fallbacks
+      // Wrapped in setTimeout to let the UI render first — never block boot
+      setTimeout(async () => {
+        try {
+          console.log('[App] Starting MIDI library load...');
+          const midiSongs = await loadMidiLibrary();
+          if (midiSongs.length > 0) {
+            setSongs(prev => {
+              const userImported = prev.filter(s => s.source !== 'built-in');
+
+              // Build a set of titles covered by MIDI files
+              const midiTitles = new Set(midiSongs.map(s => s.title.toLowerCase()));
+
+              // Keep hand-coded built-in songs that DON'T have a matching MIDI version.
+              // This preserves hand-coded piano arrangements for orchestral MIDI files
+              // (e.g. Once Upon a Time in the West hand-coded in D major vs. 29-track orchestral MIDI)
+              const handCodedKeepers = prev.filter(
+                s => s.source === 'built-in' && !midiTitles.has(s.title.toLowerCase())
+              );
+
+              if (handCodedKeepers.length > 0) {
+                console.log(`[App] Keeping ${handCodedKeepers.length} hand-coded songs without MIDI equivalents:`,
+                  handCodedKeepers.map(s => s.title));
+              }
+
+              return [...midiSongs, ...handCodedKeepers, ...userImported];
+            });
+            console.log(`[App] Loaded ${midiSongs.length} MIDI songs`);
+          }
+        } catch (err) {
+          console.error('[App] MIDI library load failed, keeping fallbacks:', err);
+        }
+      }, 2000); // Delay 2s so UI is fully responsive first
     };
     load();
   }, []);
@@ -58,24 +128,24 @@ const App: React.FC = () => {
   }
 
   // Pass onSwitchMode so the top toggle works inside each mode
-  if (mode === 'wolf') {
-    return (
-      <WolfMode
-        songs={songs}
-        onImportSong={handleImportSong}
-        onBack={() => setMode(null)}
-        onSwitchMode={() => setMode('ruby')}
-      />
-    );
-  }
-
   return (
-    <RubyMode
-      songs={songs}
-      onImportSong={handleImportSong}
-      onBack={() => setMode(null)}
-      onSwitchMode={() => setMode('wolf')}
-    />
+    <AppErrorBoundary onReset={() => setMode(null)}>
+      {mode === 'wolf' ? (
+        <WolfMode
+          songs={songs}
+          onImportSong={handleImportSong}
+          onBack={() => setMode(null)}
+          onSwitchMode={() => setMode('ruby')}
+        />
+      ) : (
+        <RubyMode
+          songs={songs}
+          onImportSong={handleImportSong}
+          onBack={() => setMode(null)}
+          onSwitchMode={() => setMode('wolf')}
+        />
+      )}
+    </AppErrorBoundary>
   );
 };
 

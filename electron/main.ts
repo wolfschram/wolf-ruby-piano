@@ -1,9 +1,13 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, net } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as http from 'http';
+import * as crypto from 'crypto';
 
 let mainWindow: BrowserWindow | null = null;
+
+// Ephemeral session token for MCP bridge auth — regenerated on every launch
+const bridgeToken = crypto.randomBytes(32).toString('hex');
 
 // ============================================================
 // MCP Bridge — HTTP server for Claude to read app state
@@ -43,7 +47,25 @@ let pendingCommands: Array<{ action: string; params: Record<string, unknown> }> 
 function startBridgeServer(): void {
   const server = http.createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
     res.setHeader('Content-Type', 'application/json');
+
+    // Allow CORS preflight + ping without auth
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    // Token auth — require Bearer token on all endpoints except /ping
+    if (req.url !== '/ping') {
+      const authHeader = req.headers['authorization'] ?? '';
+      if (authHeader !== `Bearer ${bridgeToken}`) {
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: 'Unauthorized — invalid or missing token' }));
+        return;
+      }
+    }
 
     if (req.method === 'GET' && req.url === '/state') {
       res.writeHead(200);
@@ -83,6 +105,10 @@ function startBridgeServer(): void {
 
   server.listen(9876, '127.0.0.1', () => {
     console.log('MCP Bridge server running on http://127.0.0.1:9876');
+    // Write token to userData so MCP server can authenticate
+    const tokenPath = path.join(app.getPath('userData'), '.bridge-token');
+    fs.writeFileSync(tokenPath, bridgeToken, 'utf-8');
+    console.log(`MCP Bridge token written to ${tokenPath}`);
   });
 
   server.on('error', (err: NodeJS.ErrnoException) => {
@@ -138,7 +164,7 @@ function createWindow(): void {
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173');
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
+    // DevTools available via Cmd+Option+I — no longer auto-opens
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/renderer/index.html'));
   }
@@ -215,9 +241,82 @@ ipcMain.handle('load-library', async () => {
   return null;
 });
 
+// Save Ruby progress (level, stars, etc.)
+ipcMain.handle('save-ruby-progress', async (_event, data: string) => {
+  const progressPath = path.join(app.getPath('userData'), 'ruby-progress.json');
+  fs.writeFileSync(progressPath, data, 'utf-8');
+  return true;
+});
+
+// Load Ruby progress
+ipcMain.handle('load-ruby-progress', async () => {
+  const progressPath = path.join(app.getPath('userData'), 'ruby-progress.json');
+  if (fs.existsSync(progressPath)) {
+    return fs.readFileSync(progressPath, 'utf-8');
+  }
+  return null;
+});
+
+// Save practice tracker data (Wolf spaced repetition)
+ipcMain.handle('save-practice-data', async (_event, data: string) => {
+  const dataPath = path.join(app.getPath('userData'), 'practice-data.json');
+  fs.writeFileSync(dataPath, data, 'utf-8');
+  return true;
+});
+
+// Load practice tracker data
+ipcMain.handle('load-practice-data', async () => {
+  const dataPath = path.join(app.getPath('userData'), 'practice-data.json');
+  if (fs.existsSync(dataPath)) {
+    return fs.readFileSync(dataPath, 'utf-8');
+  }
+  return null;
+});
+
 // Open URL in system browser
 ipcMain.handle('open-external', async (_event, url: string) => {
   if (typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'))) {
     await shell.openExternal(url);
   }
+});
+
+// Proxy fetch for renderer (bypass CORS)
+ipcMain.handle('proxy-fetch', async (_event, url: string) => {
+  return new Promise<string>((resolve, reject) => {
+    const request = net.request(url);
+    let body = '';
+    request.on('response', (response) => {
+      // Follow redirects automatically (net module does this)
+      response.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+      response.on('end', () => {
+        if (response.statusCode && response.statusCode >= 200 && response.statusCode < 400) {
+          resolve(body);
+        } else {
+          reject(new Error(`HTTP ${response.statusCode}`));
+        }
+      });
+    });
+    request.on('error', (err: Error) => reject(err));
+    request.end();
+  });
+});
+
+ipcMain.handle('proxy-fetch-buffer', async (_event, url: string) => {
+  return new Promise<ArrayBuffer>((resolve, reject) => {
+    const request = net.request(url);
+    const chunks: Buffer[] = [];
+    request.on('response', (response) => {
+      response.on('data', (chunk: Buffer) => { chunks.push(chunk); });
+      response.on('end', () => {
+        if (response.statusCode && response.statusCode >= 200 && response.statusCode < 400) {
+          const combined = Buffer.concat(chunks);
+          resolve(combined.buffer.slice(combined.byteOffset, combined.byteOffset + combined.byteLength));
+        } else {
+          reject(new Error(`HTTP ${response.statusCode}`));
+        }
+      });
+    });
+    request.on('error', (err: Error) => reject(err));
+    request.end();
+  });
 });

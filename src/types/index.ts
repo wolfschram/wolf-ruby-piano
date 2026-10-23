@@ -22,6 +22,7 @@ export interface Song {
   source: 'built-in' | 'imported' | 'downloaded';
   filePath: string;
   category?: 'wolf' | 'ruby';
+  orchestralReduction?: boolean;  // true if MIDI was multi-track orchestral, not a piano arrangement
 }
 
 export type PlaybackMode = 'listen' | 'practice' | 'perform';

@@ -1,16 +1,15 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Song, NoteEvent, PlaybackState, PlaybackMode } from '../types';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Song, PlaybackState } from '../types';
 import { Piano } from '../components/Piano';
 import { FallingNotes, addSparkle } from '../components/FallingNotes';
 import { SpeedControl } from '../components/SpeedControl';
 import { ScoreDisplay } from '../components/ScoreDisplay';
-import { SongBrowser } from '../components/SongBrowser';
-import { PlaybackEngine } from '../engine/PlaybackEngine';
-import { ScoreEngine } from '../engine/ScoreEngine';
+import { ExerciseBrowser } from '../components/ExerciseBrowser';
+import { ErrorBoundary } from '../components/ErrorBoundary';
+import { usePianoPlayback } from '../hooks/usePianoPlayback';
+import { formatTime } from '../utils/formatTime';
 import audioEngine from '../engine/AudioEngine';
-import midiInput from '../midi/MidiInput';
-import { useMcpBridge } from '../hooks/useMcpBridge';
-import { getAnimalForNote, getAvailableNotes, RUBY_LEVELS } from '../animals/animal-map';
+import { getAnimalForNote, RUBY_LEVELS } from '../animals/animal-map';
 import { midiToNoteName } from '../types';
 
 interface RubyModeProps {
@@ -20,619 +19,286 @@ interface RubyModeProps {
   onSwitchMode?: () => void;
 }
 
+const ENCOURAGEMENTS = [
+  'Amazing! 🌟', 'You rock! 🎸', 'Wow! 🎉', 'Keep going! 💪',
+  'So good! ✨', 'Fantastic! 🦄', 'Awesome! 🎵', 'Brilliant! 🌈',
+];
+const CARD_COLORS = ['#2D5A4E', '#4A3B6B', '#5A3B3B', '#3B4A5A', '#4A5A3B', '#3B5A4A', '#5A4A3B', '#3B3B5A'];
+const CARD_EMOJIS = ['🐱', '🐶', '🐸', '🦊', '🐻', '🐰', '🐼', '🦁', '🐮', '🐷'];
+
 export const RubyMode: React.FC<RubyModeProps> = ({ songs, onImportSong, onBack, onSwitchMode }) => {
-  const [currentSong, setCurrentSong] = useState<Song | null>(null);
-  const [showLibrary, setShowLibrary] = useState(false);
+  const [libraryTab, setLibraryTab] = useState<'songs' | 'exercises'>('songs');
   const [rubyLevel, setRubyLevel] = useState(1);
-  const [rubyPlayMode, setRubyPlayMode] = useState<'listen' | 'practice'>('listen');
-  const [playbackState, setPlaybackState] = useState<PlaybackState>({
-    isPlaying: false, currentTimeMs: 0, speedMultiplier: 0.4,
-    mode: 'listen', handFilter: 'both',
-  });
-  const [activeNotes, setActiveNotes] = useState<Set<number>>(new Set());
-  const [waitingIndex, setWaitingIndex] = useState<number | undefined>();
-  const [hitNotes, setHitNotes] = useState<Set<number>>(new Set());
-  const [samplesReady, setSamplesReady] = useState(false);
-  const [showIntro, setShowIntro] = useState(true);
+  const [rubyPlayMode, setRubyPlayMode] = useState<'listen' | 'practice'>('practice');
+  const [showIntro, setShowIntro] = useState(false);
   const [encouragement, setEncouragement] = useState('');
+  const [totalStars, setTotalStars] = useState(0);
+  const [completedSongs, setCompletedSongs] = useState<Set<string>>(new Set());
+  const [unlockedSongs, setUnlockedSongs] = useState<Set<string>>(new Set());
 
-  const playbackRef = useRef(new PlaybackEngine());
-  const scoreRef = useRef(new ScoreEngine());
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 1200, height: 400 });
-
-  const ENCOURAGEMENTS = [
-    'Amazing! 🌟', 'You rock! 🎸', 'Wow! 🎉', 'Keep going! 💪',
-    'So good! ✨', 'Fantastic! 🦄', 'Awesome! 🎵', 'Brilliant! 🌈',
-  ];
-
-  // MCP Bridge — push state to Claude
-  const handleMcpCommand = useCallback((action: string, params: Record<string, unknown>) => {
-    const pb = playbackRef.current;
-    if (action === 'play') pb.play();
-    else if (action === 'pause') pb.pause();
-    else if (action === 'stop') pb.stop();
-    else if (action === 'seek' && typeof params.timeMs === 'number') pb.seekTo(params.timeMs);
-    else if (action === 'setSpeed' && typeof params.speed === 'number') pb.setSpeed(params.speed);
-  }, []);
-
-  const { reportNoteOn, reportNoteOff } = useMcpBridge({
-    mode: 'ruby',
-    currentSong,
-    playbackState,
-    midiConnected: false, // Ruby mode doesn't show MIDI status currently
-    midiDeviceName: '',
-    songList: songs,
-    onCommand: handleMcpCommand,
+  const pb = usePianoPlayback({
+    mode: 'ruby', songs, initialSpeed: 0.4, initialMode: 'practice',
+    enableBackwardChain: false, enableSustainPedal: false,
+    onTransportReset: useCallback(() => setEncouragement(''), []),
   });
 
-  // Song duration for timeline scrubber
-  const songDurationMs = useMemo(() => {
-    if (!currentSong || currentSong.notes.length === 0) return 0;
-    return Math.max(...currentSong.notes.map(n => n.startTime + n.duration));
-  }, [currentSong]);
-
-  // Resize
+  // Wire Ruby-specific callbacks via effect (avoids circular ref with pb)
   useEffect(() => {
-    const updateSize = () => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        setDimensions({
-          width: rect.width,
-          height: Math.max(rect.height - 250, 250),
-        });
-      }
-    };
-    updateSize();
-    window.addEventListener('resize', updateSize);
-    return () => window.removeEventListener('resize', updateSize);
-  }, [showLibrary, showIntro]);
-
-  // Init
-  useEffect(() => {
-    const initAll = async () => {
-      await audioEngine.init();
-      await audioEngine.waitForLoad();
-      setSamplesReady(audioEngine.isReady());
-      console.log('[RubyMode] Piano samples ready:', audioEngine.isReady());
-      await midiInput.init();
-    };
-    initAll();
-
-    // MIDI transport keys
-    const TRANSPORT_PLAY_PAUSE = 21;   // A0 — leftmost white key
-    const TRANSPORT_STOP_REWIND = 23;  // B0 — second white key from left
-    const TRANSPORT_STEP_BACK = 108;   // C8 — rightmost white key
-    const TRANSPORT_PLAY_FROM_HERE = 107; // B7 — second white key from right
-
-    midiInput.setCallbacks({
-      onNoteOn: (note, velocity) => {
-        // Intercept transport keys — don't play sound
-        if (note === TRANSPORT_PLAY_PAUSE) {
-          audioEngine.ensureRunning();
-          const pb = playbackRef.current;
-          if (pb.getState().isPlaying) pb.pause(); else pb.play();
-          return;
-        }
-        if (note === TRANSPORT_STOP_REWIND) {
-          playbackRef.current.stop();
-          // Visual reset — force UI back to square one
-          setPlaybackState(prev => ({ ...prev, isPlaying: false, currentTimeMs: 0 }));
-          setActiveNotes(new Set());
-          setHitNotes(new Set());
-          setWaitingIndex(undefined);
-          setEncouragement('');
-          return;
-        }
-        if (note === TRANSPORT_STEP_BACK) {
-          const pb = playbackRef.current;
-          const newTime = pb.stepBackOneNote();
-          if (newTime >= 0) {
-            setPlaybackState(prev => ({ ...prev, isPlaying: false, currentTimeMs: newTime }));
-            setActiveNotes(new Set());
-          }
-          return;
-        }
-        if (note === TRANSPORT_PLAY_FROM_HERE) {
-          const pb = playbackRef.current;
-          if (!pb.getState().isPlaying) {
-            pb.play();
-          }
-          return;
-        }
-
-        // Only play through computer speakers in listen mode
-        const currentMode = playbackRef.current.getState().mode;
-        if (currentMode === 'listen') {
-          audioEngine.noteOn(note, velocity);
-        }
-        reportNoteOn(note, velocity);
-        setActiveNotes(prev => new Set([...prev, note]));
-        handleNoteInput(note);
-      },
-      onNoteOff: (note) => {
-        // Skip transport keys
-        if (note === TRANSPORT_PLAY_PAUSE || note === TRANSPORT_STOP_REWIND ||
-            note === TRANSPORT_STEP_BACK || note === TRANSPORT_PLAY_FROM_HERE) return;
-
-        const currentMode = playbackRef.current.getState().mode;
-        if (currentMode === 'listen') {
-          audioEngine.noteOff(note);
-        }
-        reportNoteOff(note);
-        setActiveNotes(prev => {
-          const next = new Set(prev);
-          next.delete(note);
-          return next;
-        });
-      },
-    });
-
-    return () => {
-      playbackRef.current.dispose();
-    };
-  }, []);
-
-  // Playback callbacks
-  useEffect(() => {
-    playbackRef.current.setCallbacks({
+    pb.playbackRef.current.setCallbacks({
       onUpdate: (state, notes) => {
-        setPlaybackState({ ...state });
-        setActiveNotes(new Set(notes.map(n => n.pitch)));
+        pb.setPlaybackState({ ...state });
+        pb.setActiveNotes(new Set(notes.map(n => n.pitch)));
       },
       onNoteHit: (note, idx) => {
-        setHitNotes(prev => new Set([...prev, idx]));
+        pb.setHitNotes(prev => { const s = new Set(prev); s.add(idx); return s; });
         const animal = getAnimalForNote(midiToNoteName(note.pitch));
-        if (animal) {
-          addSparkle(dimensions.width / 2, dimensions.height - 30, animal.color);
-        }
+        if (animal) addSparkle(pb.dimensions.width / 2, pb.dimensions.height - 30, animal.color);
       },
-      onWaitForInput: (note, idx) => {
-        setWaitingIndex(idx);
-      },
+      onWaitForInput: (_note, idx) => { pb.setWaitingIndex(idx); },
       onSongEnd: () => {
-        setPlaybackState(prev => ({ ...prev, isPlaying: false }));
-        const score = scoreRef.current.getState();
-        if (score.stars >= 3) {
-          setEncouragement('You did it! ⭐⭐⭐ Amazing job!');
-        } else {
-          setEncouragement('Great try! Want to play again?');
+        pb.setPlaybackState(prev => ({ ...prev, isPlaying: false }));
+        const score = pb.scoreRef.current.getState();
+        setEncouragement(score.stars >= 3 ? 'You did it! ⭐⭐⭐ Amazing job!' : 'Great try! Want to play again?');
+        if (pb.currentSong) {
+          setTotalStars(prev => prev + (score.stars ?? 0));
+          setCompletedSongs(prev => {
+            const next = new Set([...prev, pb.currentSong!.id]);
+            if (score.stars >= 2 && rubyLevel < 4 && next.size >= rubyLevel * 2) {
+              setRubyLevel(rubyLevel + 1);
+              setEncouragement(`Level ${rubyLevel + 1} unlocked! 🎉`);
+            }
+            return next;
+          });
         }
       },
     });
-  }, [dimensions]);
+  }, [pb.dimensions, pb.currentSong, rubyLevel]);
 
-  const handleNoteInput = useCallback((midiNote: number) => {
-    const result = playbackRef.current.onUserInput(midiNote);
-    if (result.matched) {
-      scoreRef.current.recordPracticeHit(result.noteIndex);
-      setHitNotes(prev => new Set([...prev, result.noteIndex]));
-
-      // Random encouragement every 5 correct notes
-      const score = scoreRef.current.getState();
-      if (score.hitNotes % 5 === 0 && score.hitNotes > 0) {
-        const msg = ENCOURAGEMENTS[Math.floor(Math.random() * ENCOURAGEMENTS.length)];
-        setEncouragement(msg);
-        setTimeout(() => setEncouragement(''), 2000);
-      }
-    }
+  // Load/save progress
+  useEffect(() => {
+    (async () => {
+      try {
+        const json = await window.electronAPI?.loadRubyProgress();
+        if (json) {
+          const p = JSON.parse(json);
+          if (p.level) setRubyLevel(p.level);
+          if (p.totalStars) setTotalStars(p.totalStars);
+          if (p.completedSongs) setCompletedSongs(new Set(p.completedSongs));
+          if (p.unlockedSongs) setUnlockedSongs(new Set(p.unlockedSongs));
+        }
+      } catch (_e) { /* ignore */ }
+    })();
   }, []);
 
-  // Mouse/touch on-screen piano — same audio rules as MIDI
-  const handleKeyPress = useCallback((midiNote: number) => {
-    const currentMode = playbackRef.current.getState().mode;
-    if (currentMode === 'listen') {
-      audioEngine.noteOn(midiNote, 100);
-    }
-    setActiveNotes(prev => new Set([...prev, midiNote]));
-    handleNoteInput(midiNote);
-  }, [handleNoteInput]);
-
-  const handleKeyRelease = useCallback((midiNote: number) => {
-    const currentMode = playbackRef.current.getState().mode;
-    if (currentMode === 'listen') {
-      audioEngine.noteOff(midiNote);
-    }
-    setActiveNotes(prev => {
-      const next = new Set(prev);
-      next.delete(midiNote);
-      return next;
-    });
-  }, []);
+  useEffect(() => {
+    window.electronAPI?.saveRubyProgress?.(JSON.stringify({
+      level: rubyLevel, totalStars,
+      completedSongs: Array.from(completedSongs),
+      unlockedSongs: Array.from(unlockedSongs),
+      timestamp: new Date().toISOString(),
+    })).catch(() => {});
+  }, [rubyLevel, totalStars, completedSongs, unlockedSongs]);
 
   const selectSong = useCallback((song: Song) => {
-    setCurrentSong(song);
-    setShowLibrary(false);
+    pb.selectSong(song);
     setShowIntro(false);
-    setHitNotes(new Set());
-    setWaitingIndex(undefined);
     setEncouragement('');
-
-    const pb = playbackRef.current;
-    pb.loadNotes(song.notes);
-    pb.setSpeed(0.4); // Slower for kids
-    pb.setMode(rubyPlayMode); // listen or practice
-    scoreRef.current.reset(song.notes.length);
-  }, [rubyPlayMode]);
+    pb.playbackRef.current.setSpeed(0.4);
+    pb.playbackRef.current.setMode(rubyPlayMode);
+    pb.setPlaybackState((prev: PlaybackState) => ({ ...prev, speedMultiplier: 0.4, mode: rubyPlayMode }));
+  }, [pb.selectSong, rubyPlayMode]);
 
   const startFirstSong = useCallback(async () => {
     await audioEngine.init();
-    const firstSong = songs.find(s => s.category === 'ruby' && s.difficulty === 1);
-    if (firstSong) {
-      selectSong(firstSong);
-      setTimeout(() => playbackRef.current.play(), 500);
-    } else if (songs.length > 0) {
-      selectSong(songs.filter(s => s.category === 'ruby')[0] ?? songs[0]);
-    }
+    const first = songs.find(s => s.category === 'ruby' && s.difficulty === 1);
+    if (first) { selectSong(first); setTimeout(() => pb.playbackRef.current.play(), 500); }
+    else if (songs.length > 0) selectSong(songs.filter(s => s.category === 'ruby')[0] ?? songs[0]);
   }, [songs, selectSong]);
-
-  // Timeline scrubber handler
-  const handleSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const timeMs = parseFloat(e.target.value);
-    playbackRef.current.seekTo(timeMs);
-    setPlaybackState(prev => ({ ...prev, currentTimeMs: timeMs }));
-  }, []);
-
-  function togglePlay() {
-    const pb = playbackRef.current;
-    if (pb.getState().isPlaying) pb.pause();
-    else pb.play();
-  }
 
   function switchRubyMode(newMode: 'listen' | 'practice') {
     setRubyPlayMode(newMode);
-    const pb = playbackRef.current;
-    pb.setMode(newMode);
-    pb.stop();
-    setHitNotes(new Set());
-    setWaitingIndex(undefined);
+    pb.playbackRef.current.setMode(newMode);
+    pb.playbackRef.current.stop();
+    pb.setHitNotes(new Set());
+    pb.setWaitingIndex(undefined);
     setEncouragement('');
-    scoreRef.current.reset(currentSong?.notes.length ?? 0);
-    setPlaybackState(prev => ({ ...prev, mode: newMode, isPlaying: false, currentTimeMs: 0 }));
+    pb.scoreRef.current.reset(pb.currentSong?.notes.length ?? 0);
+    pb.setPlaybackState(prev => ({ ...prev, mode: newMode, isPlaying: false, currentTimeMs: 0 }));
   }
 
-  // ======== Mode toggle pill (shared across views) ========
   const ModeToggle = () => onSwitchMode ? (
-    <div
-      style={{
-        display: 'flex', borderRadius: 8, overflow: 'hidden',
-        border: '1px solid #1A1A2E',
-        WebkitAppRegion: 'no-drag',
-      }}
-      onMouseDown={(e) => e.stopPropagation()}
-    >
-      <button onClick={(e) => { e.stopPropagation(); onSwitchMode(); }} style={{
-        padding: '6px 14px', fontSize: 12, fontWeight: 400, border: 'none',
-        backgroundColor: '#1A1A2E', color: '#666', cursor: 'pointer',
-        WebkitAppRegion: 'no-drag',
-      }}>
-        Wolf
-      </button>
-      <div style={{
-        padding: '6px 14px', fontSize: 12, fontWeight: 700,
-        backgroundColor: '#5DCAA5', color: '#FFF',
-      }}>
-        Ruby
-      </div>
+    <div style={{ display: 'flex', borderRadius: 8, overflow: 'hidden', border: '1px solid #1A1A2E', WebkitAppRegion: 'no-drag' }} onMouseDown={e => e.stopPropagation()}>
+      <button onClick={e => { e.stopPropagation(); onSwitchMode(); }} style={{ padding: '6px 14px', fontSize: 12, border: 'none', backgroundColor: '#1A1A2E', color: '#666', cursor: 'pointer', WebkitAppRegion: 'no-drag' }}>Wolf</button>
+      <div style={{ padding: '6px 14px', fontSize: 12, fontWeight: 700, backgroundColor: '#5DCAA5', color: '#FFF' }}>Ruby</div>
     </div>
   ) : null;
 
   // ============================================================
-  // Intro screen — "The 5-minute magic trick"
+  // Intro
   // ============================================================
   if (showIntro) {
     return (
-      <div ref={containerRef} style={{
-        height: '100vh',
-        backgroundColor: '#0A0A12',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 32,
-      }}>
-        {/* Top bar — draggable, padded for macOS traffic lights */}
-        <div style={{
-          position: 'absolute', top: 0, left: 0, right: 0,
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          padding: '12px 20px 12px 80px',
-          WebkitAppRegion: 'drag',
-        }}>
-          <button onClick={onBack} style={{
-            padding: '8px 16px', borderRadius: 8, border: 'none',
-            backgroundColor: '#1A1A2E', color: '#888', cursor: 'pointer', fontSize: 13,
-            WebkitAppRegion: 'no-drag',
-          }}>
-            ← Back
-          </button>
+      <div style={{ height: '100vh', backgroundColor: '#0A0A12', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 32 }}>
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 20px 12px 80px', WebkitAppRegion: 'drag' }}>
+          <button onClick={onBack} style={{ padding: '8px 16px', borderRadius: 8, border: 'none', backgroundColor: '#1A1A2E', color: '#888', cursor: 'pointer', fontSize: 13, WebkitAppRegion: 'no-drag' }}>← Back</button>
           <ModeToggle />
-          <div style={{ width: 80 }} /> {/* Spacer */}
+          <div style={{ width: 80 }} />
         </div>
-
-        <h1 style={{
-          fontSize: 48, fontWeight: 800,
-          background: 'linear-gradient(135deg, #5DCAA5, #F0997B)',
-          WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
-          textAlign: 'center', margin: 0,
-        }}>
-          🎹 Ruby's Piano!
-        </h1>
-
-        <p style={{
-          fontSize: 20, color: '#888', textAlign: 'center', maxWidth: 400,
-          margin: 0, lineHeight: 1.5,
-        }}>
-          Tap the animals to make music!
-        </p>
-
-        {/* Preview the 3 animal keys */}
+        <h1 style={{ fontSize: 48, fontWeight: 800, background: 'linear-gradient(135deg, #5DCAA5, #F0997B)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', textAlign: 'center', margin: 0 }}>🎹 Ruby's Piano!</h1>
+        <p style={{ fontSize: 20, color: '#888', textAlign: 'center', maxWidth: 400, margin: 0 }}>Tap the animals to make music!</p>
         <div style={{ display: 'flex', gap: 16, margin: '16px 0' }}>
           {['C', 'D', 'E'].map(note => {
             const animal = getAnimalForNote(note);
             if (!animal) return null;
             return (
-              <button
-                key={note}
-                onClick={async () => {
-                  await audioEngine.init();
-                  const midiNote = note === 'C' ? 60 : note === 'D' ? 62 : 64;
-                  audioEngine.playNote(midiNote, 100, 0.5);
-                }}
-                style={{
-                  width: 100, height: 120, borderRadius: 16,
-                  border: 'none', cursor: 'pointer',
-                  backgroundColor: animal.color,
-                  display: 'flex', flexDirection: 'column',
-                  alignItems: 'center', justifyContent: 'center', gap: 8,
-                  fontSize: 40, transition: 'transform 0.1s ease',
-                  boxShadow: `0 4px 16px ${animal.color}40`,
-                }}
-                onMouseDown={(e) => (e.currentTarget.style.transform = 'scale(0.95)')}
-                onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-              >
+              <button key={note} onClick={async () => { await audioEngine.init(); audioEngine.playNote(note === 'C' ? 60 : note === 'D' ? 62 : 64, 100, 0.5); }}
+                style={{ width: 100, height: 120, borderRadius: 16, border: 'none', cursor: 'pointer', backgroundColor: animal.color, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, fontSize: 40 }}>
                 <span>{animal.emoji}</span>
-                <span style={{ fontSize: 16, fontWeight: 700, color: '#FFF' }}>
-                  {animal.animal.charAt(0).toUpperCase() + animal.animal.slice(1)}
-                </span>
+                <span style={{ fontSize: 16, fontWeight: 700, color: '#FFF' }}>{animal.animal.charAt(0).toUpperCase() + animal.animal.slice(1)}</span>
               </button>
             );
           })}
         </div>
-
-        <button
-          onClick={startFirstSong}
-          style={{
-            padding: '16px 40px', borderRadius: 16,
-            border: 'none', fontSize: 22, fontWeight: 700,
-            cursor: 'pointer',
-            backgroundColor: '#F0997B', color: '#FFF',
-            boxShadow: '0 4px 16px rgba(240,153,123,0.4)',
-            transition: 'transform 0.1s ease',
-          }}
-          onMouseDown={(e) => (e.currentTarget.style.transform = 'scale(0.97)')}
-          onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-        >
-          Ready to play a song? 🎵
-        </button>
-
-        <button
-          onClick={() => { setShowIntro(false); setShowLibrary(true); }}
-          style={{
-            padding: '8px 20px', borderRadius: 8, border: 'none',
-            fontSize: 14, cursor: 'pointer',
-            backgroundColor: 'transparent', color: '#666',
-          }}
-        >
-          Browse all songs →
-        </button>
+        <button onClick={startFirstSong} style={{ padding: '16px 40px', borderRadius: 16, border: 'none', fontSize: 22, fontWeight: 700, cursor: 'pointer', backgroundColor: '#F0997B', color: '#FFF' }}>Ready to play a song? 🎵</button>
+        <button onClick={() => { setShowIntro(false); pb.setShowLibrary(true); }} style={{ padding: '8px 20px', borderRadius: 8, border: 'none', fontSize: 14, cursor: 'pointer', backgroundColor: 'transparent', color: '#666' }}>Browse all songs →</button>
       </div>
     );
   }
 
   // ============================================================
-  // Song library
+  // Library
   // ============================================================
-  if (showLibrary) {
+  if (pb.showLibrary) {
+    const maxDifficulty = rubyLevel >= 4 ? 5 : rubyLevel;
+    const rubySongs = songs.filter(s => (!s.category || s.category === 'ruby') && s.difficulty <= maxDifficulty);
+    const handleImportMidi = async () => {
+      const input = document.createElement('input');
+      input.type = 'file'; input.accept = '.mid,.midi'; input.multiple = true;
+      input.onchange = async (e) => {
+        const files = (e.target as HTMLInputElement).files;
+        if (!files) return;
+        const { parseMidiFile } = await import('../engine/MidiParser');
+        for (const file of Array.from(files)) { try { onImportSong(await parseMidiFile(file)); } catch (err) { console.error(err); } }
+      };
+      input.click();
+    };
+
     return (
-      <div style={{
-        height: '100vh',
-        backgroundColor: '#0A0A12',
-        display: 'flex',
-        flexDirection: 'column',
-      }}>
-        <div style={{
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          padding: '16px 24px 16px 80px', borderBottom: '1px solid #1A1A2E',
-          WebkitAppRegion: 'drag',
-        }}>
-          <button onClick={onBack} style={{
-            padding: '8px 16px', borderRadius: 6, border: 'none',
-            backgroundColor: '#1A1A2E', color: '#888', cursor: 'pointer', fontSize: 13,
-            WebkitAppRegion: 'no-drag',
-          }}>
-            ← Back
-          </button>
-
+      <div style={{ height: '100vh', backgroundColor: '#0A0A12', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px 16px 80px', borderBottom: '1px solid #1A1A2E', WebkitAppRegion: 'drag' }}>
+          <button onClick={onBack} style={{ padding: '8px 16px', borderRadius: 6, border: 'none', backgroundColor: '#1A1A2E', color: '#888', cursor: 'pointer', fontSize: 13, WebkitAppRegion: 'no-drag' }}>← Back</button>
           <ModeToggle />
-
-          <div style={{ display: 'flex', gap: 6, WebkitAppRegion: 'no-drag' as any }}>
+          <div style={{ width: 120 }} />
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 12, padding: '16px 24px' }}>
+          <button onClick={() => setLibraryTab('songs')} style={{ padding: '12px 32px', borderRadius: 16, border: 'none', fontSize: 16, fontWeight: 700, cursor: 'pointer', backgroundColor: libraryTab === 'songs' ? '#5DCAA5' : '#1A1A2E', color: libraryTab === 'songs' ? '#FFF' : '#666' }}>🎵 Songs</button>
+          <button onClick={() => setLibraryTab('exercises')} style={{ padding: '12px 32px', borderRadius: 16, border: 'none', fontSize: 16, fontWeight: 700, cursor: 'pointer', backgroundColor: libraryTab === 'exercises' ? '#F0997B' : '#1A1A2E', color: libraryTab === 'exercises' ? '#FFF' : '#666' }}>🏋️ Practice</button>
+        </div>
+        {libraryTab === 'songs' && (
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, padding: '0 24px 12px' }}>
             {RUBY_LEVELS.map(l => (
-              <button
-                key={l.level}
-                onClick={() => setRubyLevel(l.level)}
-                style={{
-                  padding: '4px 10px', borderRadius: 6, border: 'none',
-                  fontSize: 12, fontWeight: rubyLevel === l.level ? 700 : 400,
-                  cursor: 'pointer',
-                  backgroundColor: rubyLevel === l.level ? '#5DCAA5' : '#1A1A2E',
-                  color: rubyLevel === l.level ? '#FFF' : '#666',
-                }}>
-                Level {l.level}
+              <button key={l.level} onClick={() => setRubyLevel(l.level)} style={{ padding: '6px 16px', borderRadius: 20, border: 'none', fontSize: 13, fontWeight: 600, cursor: 'pointer', backgroundColor: rubyLevel === l.level ? '#5DCAA5' : '#1A1A2E', color: rubyLevel === l.level ? '#FFF' : '#666' }}>Level {l.level}</button>
+            ))}
+          </div>
+        )}
+        <div style={{ flex: 1, padding: '0 24px 24px', overflow: 'auto' }}>
+          {libraryTab === 'songs' ? (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 16 }}>
+                {rubySongs.map((song, idx) => (
+                  <div key={song.id} onClick={() => { selectSong(song); setTimeout(() => pb.playbackRef.current.play(), 500); }}
+                    style={{ backgroundColor: CARD_COLORS[idx % CARD_COLORS.length], borderRadius: 16, padding: 16, cursor: 'pointer', border: '2px solid transparent', transition: 'all 0.2s ease', display: 'flex', flexDirection: 'column', gap: 8, minHeight: 140 }}
+                    onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.03)'; e.currentTarget.style.borderColor = '#5DCAA5'; }}
+                    onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.borderColor = 'transparent'; }}>
+                    <div style={{ fontSize: 32 }}>{CARD_EMOJIS[idx % CARD_EMOJIS.length]}</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: '#FFF' }}>{song.title}</div>
+                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)' }}>{song.artist}</div>
+                    <div style={{ marginTop: 'auto', display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>{formatTime(song.durationMs)}</span>
+                      <span style={{ fontSize: 13 }}>{'⭐'.repeat(song.difficulty)}{'☆'.repeat(5 - song.difficulty)}</span>
+                    </div>
+                    <div style={{ textAlign: 'center', padding: '6px 0', borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.15)', color: '#FFF', fontSize: 13, fontWeight: 600 }}>Play ▶</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                <button onClick={handleImportMidi} style={{ background: 'none', border: '1px dashed #333', borderRadius: 8, padding: '8px 20px', color: '#555', fontSize: 12, cursor: 'pointer' }}>+ Import your own .mid files</button>
+              </div>
+            </>
+          ) : (
+            <ExerciseBrowser mode="ruby" onSelectExercise={song => { selectSong(song); setTimeout(() => pb.playbackRef.current.play(), 500); }} />
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================
+  // Playing
+  // ============================================================
+  return (
+    <ErrorBoundary fallbackMessage="Oops — this song hit a wrong note" onReset={() => pb.setShowLibrary(true)}>
+      <div ref={pb.containerRef} style={{ height: '100vh', backgroundColor: '#0A0A12', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 16px 8px 80px', borderBottom: '1px solid #1A1A2E', flexShrink: 0, WebkitAppRegion: 'drag' }}>
+        <button onClick={() => { pb.playbackRef.current.stop(); pb.setShowLibrary(true); }} style={{ padding: '6px 12px', borderRadius: 6, border: 'none', backgroundColor: '#1A1A2E', color: '#888', cursor: 'pointer', fontSize: 12, WebkitAppRegion: 'no-drag' }}>← Songs</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, WebkitAppRegion: 'no-drag' as any }}>
+          <ModeToggle />
+          <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid #1A1A2E' }}>
+            <button onClick={() => switchRubyMode('listen')} style={{ padding: '4px 10px', fontSize: 11, fontWeight: rubyPlayMode === 'listen' ? 700 : 400, border: 'none', cursor: 'pointer', backgroundColor: rubyPlayMode === 'listen' ? '#5DCAA5' : '#1A1A2E', color: rubyPlayMode === 'listen' ? '#FFF' : '#666' }}>Listen</button>
+            <button onClick={() => switchRubyMode('practice')} style={{ padding: '4px 10px', fontSize: 11, fontWeight: rubyPlayMode === 'practice' ? 700 : 400, border: 'none', cursor: 'pointer', backgroundColor: rubyPlayMode === 'practice' ? '#F0997B' : '#1A1A2E', color: rubyPlayMode === 'practice' ? '#FFF' : '#666' }}>Play Along</button>
+          </div>
+          <div style={{ display: 'flex', gap: 2, borderRadius: 6, overflow: 'hidden', border: '1px solid #1A1A2E' }}>
+            {(['both', 'left', 'right'] as const).map(h => (
+              <button key={h} onClick={() => { pb.playbackRef.current.setHandFilter(h); pb.setPlaybackState(prev => ({ ...prev, handFilter: h })); }}
+                style={{ padding: '4px 10px', border: 'none', fontSize: 11, cursor: 'pointer', fontWeight: pb.playbackState.handFilter === h ? 700 : 400, backgroundColor: pb.playbackState.handFilter === h ? (h === 'left' ? '#3366BB' : h === 'right' ? '#CC8833' : '#555') : '#1A1A2E', color: pb.playbackState.handFilter === h ? '#FFF' : '#666' }}>
+                {h === 'both' ? '🤲 Both' : h === 'left' ? '🫲 Left' : '🫱 Right'}
               </button>
             ))}
           </div>
+          <span style={{ fontSize: 14, fontWeight: 700, color: '#EEE' }}>🎵 {pb.currentSong?.title ?? 'Choose a song'}</span>
         </div>
-        <div style={{ flex: 1, padding: 24, overflow: 'auto' }}>
-          <SongBrowser
-            songs={songs}
-            onSelectSong={(song) => { selectSong(song); setTimeout(() => playbackRef.current.play(), 500); }}
-            onImportSong={onImportSong}
-            mode="ruby"
-          />
-        </div>
-      </div>
-    );
-  }
-
-  // ============================================================
-  // Playing view
-  // ============================================================
-  return (
-    <div ref={containerRef} style={{
-      height: '100vh',
-      backgroundColor: '#0A0A12',
-      display: 'flex',
-      flexDirection: 'column',
-      overflow: 'hidden',
-    }}>
-      {/* Top Bar — draggable, padded for macOS traffic lights */}
-      <div style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        padding: '8px 16px 8px 80px', borderBottom: '1px solid #1A1A2E', flexShrink: 0,
-        WebkitAppRegion: 'drag',
-      }}>
-        <button onClick={() => { playbackRef.current.stop(); setShowLibrary(true); }}
-          style={{
-            padding: '6px 12px', borderRadius: 6, border: 'none',
-            backgroundColor: '#1A1A2E', color: '#888', cursor: 'pointer', fontSize: 12,
-            WebkitAppRegion: 'no-drag',
-          }}>
-          ← Songs
-        </button>
-
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, WebkitAppRegion: 'no-drag' as any }}>
-          <ModeToggle />
-          {/* Listen / Play Along toggle */}
-          <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid #1A1A2E' }}>
-            <button onClick={() => switchRubyMode('listen')} style={{
-              padding: '4px 10px', fontSize: 11, fontWeight: rubyPlayMode === 'listen' ? 700 : 400,
-              border: 'none', cursor: 'pointer',
-              backgroundColor: rubyPlayMode === 'listen' ? '#5DCAA5' : '#1A1A2E',
-              color: rubyPlayMode === 'listen' ? '#FFF' : '#666',
-            }}>
-              Listen
-            </button>
-            <button onClick={() => switchRubyMode('practice')} style={{
-              padding: '4px 10px', fontSize: 11, fontWeight: rubyPlayMode === 'practice' ? 700 : 400,
-              border: 'none', cursor: 'pointer',
-              backgroundColor: rubyPlayMode === 'practice' ? '#F0997B' : '#1A1A2E',
-              color: rubyPlayMode === 'practice' ? '#FFF' : '#666',
-            }}>
-              Play Along
-            </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: pb.midiConnected ? '#5DCAA5' : '#CC4444' }} />
+            <span style={{ fontSize: 11, color: '#666' }}>{pb.midiConnected ? pb.midiDeviceName : 'No keyboard'}</span>
           </div>
-          <span style={{ fontSize: 14, fontWeight: 700, color: '#EEE' }}>
-            🎵 {currentSong?.title ?? 'Choose a song'}
-          </span>
-        </div>
-
-        <div style={{ WebkitAppRegion: 'no-drag' as any }}>
-          <ScoreDisplay score={scoreRef.current.getState()} mode="ruby" />
+          <ScoreDisplay score={pb.scoreRef.current.getState()} mode="ruby" />
         </div>
       </div>
 
-      {/* Encouragement banner */}
-      {encouragement && (
-        <div style={{
-          textAlign: 'center', padding: '8px 0',
-          fontSize: 20, fontWeight: 700, color: '#5DCAA5',
-        }}>
-          {encouragement}
+      {encouragement && <div style={{ textAlign: 'center', padding: '8px 0', fontSize: 20, fontWeight: 700, color: '#5DCAA5' }}>{encouragement}</div>}
+
+      {pb.currentSong && (
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 24, padding: '4px 0', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ width: 20, height: 20, borderRadius: '50%', backgroundColor: '#3366BB', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 800, color: '#FFF' }}>L</div>
+            <span style={{ fontSize: 12, color: '#3366BB', fontWeight: 600 }}>Left Hand</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ width: 20, height: 20, borderRadius: '50%', backgroundColor: '#CC8833', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 800, color: '#FFF' }}>R</div>
+            <span style={{ fontSize: 12, color: '#CC8833', fontWeight: 600 }}>Right Hand</span>
+          </div>
         </div>
       )}
 
-      {/* Falling Notes */}
-      <div style={{ flex: 1, position: 'relative' }}>
-        <FallingNotes
-          notes={currentSong?.notes ?? []}
-          currentTimeMs={playbackState.currentTimeMs}
-          speedMultiplier={playbackState.speedMultiplier}
-          mode="ruby"
-          rubyLevel={rubyLevel}
-          handFilter="both"
-          width={dimensions.width}
-          height={dimensions.height}
-          waitingNoteIndex={waitingIndex}
-          hitNotes={hitNotes}
-        />
+      <div style={{ flex: 1, position: 'relative', overflow: 'hidden', minHeight: 0 }}>
+        <FallingNotes notes={pb.currentSong?.notes ?? []} currentTimeMs={pb.playbackState.currentTimeMs} speedMultiplier={pb.playbackState.speedMultiplier} mode="ruby" rubyLevel={rubyLevel} handFilter={pb.playbackState.handFilter} width={pb.dimensions.width} height={pb.dimensions.height} waitingNoteIndex={pb.waitingIndex} hitNotes={pb.hitNotes} />
       </div>
 
-      {/* Piano (real keys with animal overlays) */}
       <div style={{ flexShrink: 0, overflow: 'hidden' }}>
-        <Piano
-          startNote={36}
-          endNote={96}
-          activeNotes={activeNotes}
-          mode="ruby"
-          rubyLevel={rubyLevel}
-          onKeyPress={handleKeyPress}
-          onKeyRelease={handleKeyRelease}
-          width={dimensions.width}
-          height={100}
-        />
+        <Piano startNote={36} endNote={96} activeNotes={pb.activeNotes} mode="ruby" rubyLevel={rubyLevel} onKeyPress={pb.handleKeyPress} onKeyRelease={pb.handleKeyRelease} width={pb.dimensions.width} height={100} />
       </div>
 
-      {/* Bottom Bar — play + timeline + speed in one row */}
-      <div style={{
-        display: 'flex', alignItems: 'center',
-        padding: '5px 12px', gap: 8, borderTop: '1px solid #1A1A2E', flexShrink: 0,
-        backgroundColor: '#0A0A12',
-      }}>
-        <button
-          onClick={async () => { await audioEngine.init(); togglePlay(); }}
-          style={{
-            width: 30, height: 30, borderRadius: '50%', border: 'none',
-            backgroundColor: '#5DCAA5', color: '#FFF', fontSize: 14,
-            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexShrink: 0,
-          }}>
-          {playbackState.isPlaying ? '⏸' : '▶'}
-        </button>
-
-        {/* Timeline scrubber */}
-        <span style={{ fontSize: 9, color: '#555', fontFamily: 'monospace', flexShrink: 0 }}>
-          {formatTime(playbackState.currentTimeMs)}
-        </span>
-        {songDurationMs > 0 && (
-          <input
-            type="range"
-            min={0}
-            max={songDurationMs}
-            value={playbackState.currentTimeMs}
-            onChange={handleSeek}
-            style={{ flex: 1, height: 3, cursor: 'pointer', accentColor: '#5DCAA5', minWidth: 60 }}
-          />
-        )}
-        <span style={{ fontSize: 9, color: '#555', fontFamily: 'monospace', flexShrink: 0 }}>
-          {formatTime(songDurationMs)}
-        </span>
-
-        <SpeedControl
-          speed={playbackState.speedMultiplier}
-          onChange={(s) => playbackRef.current.setSpeed(s)}
-          mode="ruby"
-        />
+      <div style={{ display: 'flex', alignItems: 'center', padding: '5px 12px', gap: 8, borderTop: '1px solid #1A1A2E', flexShrink: 0, backgroundColor: '#0A0A12' }}>
+        <button onClick={async () => { await audioEngine.init(); pb.togglePlay(); }} style={{ width: 30, height: 30, borderRadius: '50%', border: 'none', backgroundColor: '#5DCAA5', color: '#FFF', fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{pb.playbackState.isPlaying ? '⏸' : '▶'}</button>
+        <span style={{ fontSize: 9, color: '#555', fontFamily: 'monospace', flexShrink: 0 }}>{formatTime(pb.playbackState.currentTimeMs)}</span>
+        {pb.songDurationMs > 0 && <input type="range" min={0} max={pb.songDurationMs} value={pb.playbackState.currentTimeMs} onChange={pb.handleSeek} style={{ flex: 1, height: 3, cursor: 'pointer', accentColor: '#5DCAA5', minWidth: 60 }} />}
+        <span style={{ fontSize: 9, color: '#555', fontFamily: 'monospace', flexShrink: 0 }}>{formatTime(pb.songDurationMs)}</span>
+        <SpeedControl speed={pb.playbackState.speedMultiplier} onChange={s => { pb.playbackRef.current.setSpeed(s); pb.setPlaybackState(prev => ({ ...prev, speedMultiplier: s })); }} mode="ruby" />
       </div>
-    </div>
+      </div>
+    </ErrorBoundary>
   );
 };
-
-/** Format milliseconds as m:ss */
-function formatTime(ms: number): string {
-  const totalSec = Math.floor(ms / 1000);
-  const m = Math.floor(totalSec / 60);
-  const s = totalSec % 60;
-  return `${m}:${s.toString().padStart(2, '0')}`;
-}
 
 export default RubyMode;

@@ -13,15 +13,48 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import http from "http";
+import fs from "fs";
+import os from "os";
+import nodePath from "path";
 
 // ============================================================
 // HTTP client to talk to the Electron bridge
 // ============================================================
 const BRIDGE_URL = "http://127.0.0.1:9876";
 
+/**
+ * Read the ephemeral auth token written by the Electron app.
+ * Falls back gracefully if not found (allows unauthenticated dev mode).
+ */
+function loadBridgeToken(): string {
+  const candidates = [
+    // macOS
+    nodePath.join(os.homedir(), "Library", "Application Support", "wolf-ruby-piano", ".bridge-token"),
+    // Linux
+    nodePath.join(os.homedir(), ".config", "wolf-ruby-piano", ".bridge-token"),
+    // Windows
+    nodePath.join(os.homedir(), "AppData", "Roaming", "wolf-ruby-piano", ".bridge-token"),
+  ];
+  for (const p of candidates) {
+    try {
+      return fs.readFileSync(p, "utf-8").trim();
+    } catch { /* try next */ }
+  }
+  console.warn("[MCP] No bridge token found — requests may fail auth");
+  return "";
+}
+
+let bridgeToken = loadBridgeToken();
+
+function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (bridgeToken) headers["Authorization"] = `Bearer ${bridgeToken}`;
+  return headers;
+}
+
 async function bridgeGet(path: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const req = http.get(`${BRIDGE_URL}${path}`, { timeout: 3000 }, (res) => {
+    const req = http.get(`${BRIDGE_URL}${path}`, { timeout: 3000, headers: getAuthHeaders() }, (res) => {
       let body = "";
       res.on("data", (chunk) => { body += chunk; });
       res.on("end", () => {
@@ -42,7 +75,7 @@ async function bridgePost(path: string, data: unknown): Promise<unknown> {
     const payload = JSON.stringify(data);
     const req = http.request(`${BRIDGE_URL}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) },
+      headers: { "Content-Type": "application/json", "Content-Length": String(Buffer.byteLength(payload)), ...getAuthHeaders() },
       timeout: 3000,
     }, (res) => {
       let body = "";

@@ -10,7 +10,25 @@
     </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Fallback: visible until React mounts (proves Electron loaded the page) -->
+      <div id="boot-indicator" style="height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:system-ui;color:#666">
+        <div style="font-size:48px;margin-bottom:16px">🎹</div>
+        <div>Loading Wolf & Ruby Piano...</div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Safety net: if React hasn't mounted after 10s, show error info
+      setTimeout(function() {
+        var indicator = document.getElementById('boot-indicator');
+        if (indicator) {
+          indicator.innerHTML = '<div style="font-size:48px;margin-bottom:16px">⚠️</div>' +
+            '<div style="color:#CC8833;font-size:18px;font-weight:bold">App failed to load</div>' +
+            '<div style="color:#888;margin-top:8px;font-size:13px">Check DevTools console (Cmd+Option+I) for errors</div>' +
+            '<div style="color:#555;margin-top:16px;font-size:12px">Then restart with: npm run dev</div>';
+        }
+      }, 10000);
+    </script>
   </body>
 </html>

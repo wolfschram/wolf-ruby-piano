@@ -1,3 +1,5 @@
+/// <reference path="../types/electron.d.ts" />
+
 /**
  * MidiSearch — search and download MIDI files from online libraries.
  *
@@ -27,17 +29,21 @@ export async function searchMidi(query: string, page: number = 0): Promise<{
 
   const url = `${BITMIDI_BASE}/search?q=${encodeURIComponent(query.trim())}${page > 0 ? `&page=${page}` : ''}`;
 
-  const resp = await fetch(url);
-  if (!resp.ok) {
-    throw new Error(`Search failed: HTTP ${resp.status}`);
+  // Use Electron proxy to bypass CORS, fallback to direct fetch for dev
+  let html: string;
+  if (window.electronAPI?.proxyFetch) {
+    html = await window.electronAPI.proxyFetch(url);
+  } else {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`Search failed: HTTP ${resp.status}`);
+    html = await resp.text();
   }
-
-  const html = await resp.text();
   return parseBitmidiResults(html);
 }
 
 /**
  * Parse BitMidi search result HTML into structured results.
+ * BitMidi embeds search data as JSON in a window.initStore script tag.
  */
 function parseBitmidiResults(html: string): {
   results: MidiSearchResult[];
@@ -45,79 +51,96 @@ function parseBitmidiResults(html: string): {
 } {
   const results: MidiSearchResult[] = [];
 
-  // Extract total result count — look for pattern like "444 results"
+  // BitMidi uses a JS SPA — result data lives in window.initStore JSON
+  const storeMatch = html.match(/window\.initStore\s*=\s*({[\s\S]+?})\s*<\/script>/);
+  if (!storeMatch) {
+    // Fallback: try legacy HTML patterns in case they revert
+    return parseBitmidiLegacy(html);
+  }
+
+  try {
+    const store = JSON.parse(storeMatch[1]);
+    const midis = store?.data?.midis;
+    if (!midis || typeof midis !== 'object') {
+      return parseBitmidiLegacy(html);
+    }
+
+    const entries = Object.values(midis) as Array<Record<string, unknown>>;
+    for (const entry of entries) {
+      const name = (entry.name as string) || (entry.slug as string) || '';
+      const downloadUrl = entry.downloadUrl as string;
+      if (!downloadUrl) continue;
+
+      results.push({
+        title: cleanTitle(name),
+        downloadUrl: downloadUrl.startsWith('http')
+          ? downloadUrl
+          : `${BITMIDI_BASE}${downloadUrl}`,
+        views: (entry.views as number) ?? 0,
+        plays: (entry.plays as number) ?? 0,
+        source: 'BitMidi',
+      });
+    }
+
+    // Total count from store metadata or fall back to result count
+    let totalResults = results.length;
+    try {
+      const views = store?.data?.views;
+      if (views) {
+        const searchViews = Object.values(views)?.[0] as Record<string, unknown> | undefined;
+        if (searchViews) {
+          const firstKey = Object.keys(searchViews)[0];
+          const meta = searchViews[firstKey] as Record<string, unknown> | undefined;
+          if (meta?.total) totalResults = meta.total as number;
+        }
+      }
+    } catch { /* use results.length */ }
+
+    return { results, totalResults };
+  } catch {
+    return parseBitmidiLegacy(html);
+  }
+}
+
+/**
+ * Legacy fallback parser for older BitMidi HTML structure.
+ */
+function parseBitmidiLegacy(html: string): {
+  results: MidiSearchResult[];
+  totalResults: number;
+} {
+  const results: MidiSearchResult[] = [];
   let totalResults = 0;
   const totalMatch = html.match(/(\d[\d,]*)\s+results?/i);
   if (totalMatch) {
     totalResults = parseInt(totalMatch[1].replace(/,/g, ''), 10);
   }
 
-  // Extract download links — pattern: /uploads/XXXXX.mid
-  // Each result has a title (filename) and a download link
-  // BitMidi HTML structure: links with href containing "/uploads/" and filenames as text
-
-  // Strategy: find all /uploads/XXXXX.mid patterns and their associated titles
-  // The page has patterns like: href="/some-slug-mid" with text being the filename
-  // and href="/uploads/XXXXX.mid" as download links
-
-  // Extract all upload links with their IDs
   const uploadRegex = /href="\/uploads\/(\d+)\.mid"/g;
-  const uploadIds: string[] = [];
+  const slugRegex = /href="\/([a-z0-9][a-z0-9\-]*-mid)"[^>]*>([^<]+)/gi;
   let match;
+
+  // Try upload-style links first
   while ((match = uploadRegex.exec(html)) !== null) {
-    uploadIds.push(match[1]);
+    results.push({
+      title: `MIDI ${match[1]}`,
+      downloadUrl: `${BITMIDI_BASE}/uploads/${match[1]}.mid`,
+      views: 0, plays: 0, source: 'BitMidi',
+    });
   }
 
-  // Extract titles — they appear as text in anchor tags near the results
-  // BitMidi uses slugified filenames in URLs like /some-song-name-mid
-  // The actual displayed text is the original filename
-  // Pattern: class contains "Midi" or the text ends with .mid
-  const titleRegex = /class="[^"]*"[^>]*>([^<]*\.mid)<\/a>/gi;
-  const titles: string[] = [];
-  while ((match = titleRegex.exec(html)) !== null) {
-    titles.push(match[1]);
-  }
-
-  // If title extraction didn't work, try alternative patterns
-  if (titles.length === 0) {
-    // Try extracting from slug URLs: href="/some-file-name-mid"
-    const slugRegex = /href="\/([a-z0-9][a-z0-9\-]*-mid)"[^>]*>([^<]+)</gi;
+  // Try slug-style links if nothing found
+  if (results.length === 0) {
     while ((match = slugRegex.exec(html)) !== null) {
       const text = match[2].trim();
-      if (text && !text.includes('<') && text.length > 2) {
-        titles.push(text);
+      if (text && text.length > 2) {
+        results.push({
+          title: cleanTitle(text),
+          downloadUrl: `${BITMIDI_BASE}/${match[1]}`,
+          views: 0, plays: 0, source: 'BitMidi',
+        });
       }
     }
-  }
-
-  // Extract view/play counts — patterns like "24,374 views" and "6,249 plays"
-  // These appear in spans near each result
-  const statsRegex = /([\d,]+)\s+views?\s*[^]*?([\d,]+)\s+plays?/gi;
-  const stats: Array<{ views: number; plays: number }> = [];
-  while ((match = statsRegex.exec(html)) !== null) {
-    stats.push({
-      views: parseInt(match[1].replace(/,/g, ''), 10),
-      plays: parseInt(match[2].replace(/,/g, ''), 10),
-    });
-  }
-
-  // Build results by matching upload IDs with titles
-  const count = Math.max(uploadIds.length, titles.length);
-  for (let i = 0; i < count; i++) {
-    const uploadId = uploadIds[i];
-    if (!uploadId) continue;
-
-    const title = titles[i]
-      ? cleanTitle(titles[i])
-      : `MIDI ${uploadId}`;
-
-    results.push({
-      title,
-      downloadUrl: `${BITMIDI_BASE}/uploads/${uploadId}.mid`,
-      views: stats[i]?.views ?? 0,
-      plays: stats[i]?.plays ?? 0,
-      source: 'BitMidi',
-    });
   }
 
   return { results, totalResults };
@@ -138,9 +161,10 @@ function cleanTitle(filename: string): string {
  * Download a MIDI file from a URL and return the ArrayBuffer.
  */
 export async function downloadMidi(url: string): Promise<ArrayBuffer> {
-  const resp = await fetch(url);
-  if (!resp.ok) {
-    throw new Error(`Download failed: HTTP ${resp.status}`);
+  if (window.electronAPI?.proxyFetchBuffer) {
+    return window.electronAPI.proxyFetchBuffer(url);
   }
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Download failed: HTTP ${resp.status}`);
   return resp.arrayBuffer();
 }
