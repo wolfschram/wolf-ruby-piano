@@ -4,8 +4,17 @@ import Foundation
 enum MIDIFileParser {
     enum ParseError: Error { case notMIDI, truncated }
 
+    struct Result {
+        let notes: [NoteEvent]
+        /// Orchestra/band file with no piano part: every instrument folded onto piano.
+        let isBandArrangement: Bool
+        /// Start time (seconds, same clock as notes) of every bar.
+        let bars: [Double]
+    }
+
     private struct RawNote {
         let track: Int
+        let channel: Int
         let pitch: Int
         let velocity: Int
         let startTick: Int
@@ -13,6 +22,10 @@ enum MIDIFileParser {
     }
 
     static func parse(_ data: Data) throws -> [NoteEvent] {
+        try read(data).notes
+    }
+
+    static func read(_ data: Data) throws -> Result {
         let bytes = [UInt8](data)
         var reader = Reader(bytes: bytes)
 
@@ -33,6 +46,8 @@ enum MIDIFileParser {
 
         var tempos: [(tick: Int, usPerQuarter: Double)] = [(0, 500_000)]
         var raw: [RawNote] = []
+        var programs: [Int: Int] = [:]   // channel → General MIDI program (first one set)
+        var meters: [(tick: Int, numerator: Int, denominator: Int)] = []
 
         for track in 0..<Int(trackCount) {
             guard reader.pos + 8 <= bytes.count else { break }
@@ -62,6 +77,11 @@ enum MIDIFileParser {
                     if type == 0x51, len == 3 {
                         let us = (Int(try reader.u8()) << 16) | (Int(try reader.u8()) << 8) | Int(try reader.u8())
                         tempos.append((tick, Double(us)))
+                    } else if type == 0x58, len >= 2 {
+                        let numerator = Int(try reader.u8())
+                        let denominator = 1 << Int(try reader.u8())
+                        meters.append((tick, max(1, numerator), max(1, denominator)))
+                        reader.pos += len - 2
                     } else {
                         reader.pos += len
                     }
@@ -81,13 +101,16 @@ enum MIDIFileParser {
                             let on = stack.removeFirst()
                             open[key] = stack
                             if channel != 9 { // skip General MIDI drums
-                                raw.append(RawNote(track: track, pitch: pitch, velocity: on.velocity,
+                                raw.append(RawNote(track: track, channel: channel, pitch: pitch, velocity: on.velocity,
                                                    startTick: on.tick, endTick: max(tick, on.tick + 1)))
                             }
                         }
                     case 0xA0, 0xB0, 0xE0:
                         reader.pos += 2
-                    case 0xC0, 0xD0:
+                    case 0xC0:
+                        let program = Int(try reader.u8())
+                        if programs[channel] == nil { programs[channel] = program }
+                    case 0xD0:
                         reader.pos += 1
                     default:
                         reader.pos = end
@@ -113,6 +136,20 @@ enum MIDIFileParser {
             return time + Double(tick - lastTick) * us / ticksPerQuarter / 1_000_000
         }
 
+        // Multi-instrument files: keep only the piano part if there is one (GM programs 0–5).
+        // Channels without a program change default to Acoustic Grand Piano.
+        func isPiano(_ n: RawNote) -> Bool { (programs[n.channel] ?? 0) <= 5 }
+        let pianoNotes = raw.filter(isPiano)
+        let instruments = Set(raw.map { programs[$0.channel] ?? 0 })
+        var isBand = false
+        if instruments.count > 1 {
+            if pianoNotes.count >= max(16, raw.count / 8) {
+                raw = pianoNotes
+            } else {
+                isBand = true
+            }
+        }
+
         let hands = assignHands(raw)
         var notes = raw.enumerated().map { i, n in
             NoteEvent(id: 0, pitch: n.pitch, start: seconds(n.startTick),
@@ -123,10 +160,25 @@ enum MIDIFileParser {
 
         // Start the song right away instead of after a long silent intro.
         let offset = max(0, (notes.first?.start ?? 0) - 0.5)
-        return notes.enumerated().map { i, n in
+        let result = notes.enumerated().map { i, n in
             NoteEvent(id: i, pitch: n.pitch, start: n.start - offset, duration: n.duration,
                       velocity: n.velocity, hand: n.hand, finger: nil)
         }
+        // Bar lines from the time signature(s), default 4/4.
+        meters.sort { $0.tick < $1.tick }
+        if meters.first?.tick != 0 { meters.insert((0, 4, 4), at: 0) }
+        let lastTick = raw.map(\.endTick).max() ?? 0
+        var bars: [Double] = []
+        var tick = 0
+        var meterIndex = 0
+        while tick <= lastTick, bars.count < 5000 {
+            while meterIndex + 1 < meters.count, meters[meterIndex + 1].tick <= tick { meterIndex += 1 }
+            let m = meters[meterIndex]
+            bars.append(seconds(tick) - offset)
+            tick += max(1, Int(ticksPerQuarter * 4 * Double(m.numerator) / Double(m.denominator)))
+        }
+
+        return Result(notes: result, isBandArrangement: isBand, bars: bars.filter { $0 > -2 })
     }
 
     /// Two note tracks → higher one is the right hand. Otherwise split by pitch.

@@ -51,6 +51,8 @@ struct Song: Identifiable {
     let difficulty: Int
     var notes: [NoteEvent]       // sorted by start
     var tip: String? = nil       // shown for exercises
+    var isBandArrangement = false
+    var bars: [Double] = []
 
     var duration: Double { notes.map(\.end).max() ?? 0 }
     var lowestPitch: Int { notes.map(\.pitch).min() ?? 60 }

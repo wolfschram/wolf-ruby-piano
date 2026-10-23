@@ -24,8 +24,11 @@ enum Exercises {
             NoteEvent(id: i, pitch: n.pitch, start: n.start, duration: n.duration,
                       velocity: n.velocity, hand: n.hand, finger: n.finger)
         }
+        let barLength = 4 * 60 / bpm
+        let end = numbered.map(\.end).max() ?? 0
         return Song(id: "ex-" + id, title: title, artist: "Finger training", category: .exercise,
-                    difficulty: difficulty, notes: numbered, tip: tip)
+                    difficulty: difficulty, notes: numbered, tip: tip,
+                    bars: Array(stride(from: 0, through: end, by: barLength)))
     }
 
     private static func line(_ hand: Hand, _ pairs: [(Int, Int)]) -> [Step] {

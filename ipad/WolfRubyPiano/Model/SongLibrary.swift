@@ -13,6 +13,7 @@ struct SongEntry: Identifiable, Hashable {
     let category: SongCategory
     let difficulty: Int
     let source: Source
+    var isBandArrangement = false
 }
 
 @MainActor @Observable
@@ -58,14 +59,32 @@ final class SongLibrary {
             list.append(SongEntry(id: "import-" + name, title: name.replacingOccurrences(of: "-", with: " "),
                                   artist: "Imported", category: .imported, difficulty: 3, source: .imported(url)))
         }
+        for i in list.indices {
+            if let url = fileURL(list[i].source), let data = try? Data(contentsOf: url),
+               let result = try? MIDIFileParser.read(data) {
+                list[i].isBandArrangement = result.isBandArrangement
+            }
+        }
         entries = list
+    }
+
+    private func fileURL(_ source: SongEntry.Source) -> URL? {
+        switch source {
+        case .bundle(let file): Bundle.main.url(forResource: (file as NSString).deletingPathExtension, withExtension: "mid")
+        case .imported(let url): url
+        case .exercise: nil
+        }
     }
 
     func entries(in category: SongCategory) -> [SongEntry] {
         entries.filter { $0.category == category }
     }
 
-    var featured: SongEntry? { entries.first { $0.id == Self.featuredID } }
+    /// An imported piano version of Wolf's piece wins over the bundled orchestra file.
+    var featured: SongEntry? {
+        entries.first { $0.category == .imported && $0.title.lowercased().contains("west") && !$0.isBandArrangement }
+            ?? entries.first { $0.id == Self.featuredID }
+    }
 
     /// Copies a picked .mid file into the app so it stays available.
     func importFile(at url: URL) throws {
@@ -82,19 +101,14 @@ final class SongLibrary {
     func load(_ entry: SongEntry) throws -> Song {
         if let song = cache[entry.id] { return song }
         var song: Song
-        switch entry.source {
-        case .exercise(let id):
+        if case .exercise(let id) = entry.source {
             song = Exercises.all.first { $0.id == id }!
-        case .bundle(let file):
-            let name = (file as NSString).deletingPathExtension
-            guard let url = Bundle.main.url(forResource: name, withExtension: "mid") else {
-                throw MIDIFileParser.ParseError.notMIDI
-            }
+        } else {
+            guard let url = fileURL(entry.source) else { throw MIDIFileParser.ParseError.notMIDI }
+            let result = try MIDIFileParser.read(Data(contentsOf: url))
             song = Song(id: entry.id, title: entry.title, artist: entry.artist, category: entry.category,
-                        difficulty: entry.difficulty, notes: try MIDIFileParser.parse(Data(contentsOf: url)))
-        case .imported(let url):
-            song = Song(id: entry.id, title: entry.title, artist: entry.artist, category: entry.category,
-                        difficulty: entry.difficulty, notes: try MIDIFileParser.parse(Data(contentsOf: url)))
+                        difficulty: entry.difficulty, notes: result.notes, isBandArrangement: result.isBandArrangement,
+                        bars: result.bars)
         }
         Fingering.apply(to: &song.notes)
         cache[entry.id] = song

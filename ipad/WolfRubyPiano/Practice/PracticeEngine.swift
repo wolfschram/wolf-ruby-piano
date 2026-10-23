@@ -56,20 +56,34 @@ final class PracticeEngine {
     @ObservationIgnored private var lastTimestamp: CFTimeInterval = 0
     @ObservationIgnored private var messageTask: Task<Void, Never>?
 
-    private let leadIn = 1.5
+    private let leadIn = 2.1
+    @ObservationIgnored private var lastCount: Int?
+
+    /// 3 · 2 · 1 before the loop starts (nil once the music is running).
+    var countIn: Int? {
+        guard isPlaying else { return nil }
+        let remaining = loopRange.start - time
+        guard remaining > 0.02, remaining <= leadIn else { return nil }
+        return min(3, max(1, Int((remaining / leadIn * 3).rounded(.up))))
+    }
     private let transportKeys: Set<Int> = [21, 22, 23, 107, 108]
 
     init(song: Song) {
         self.song = song
         self.phrases = song.phrases()
         self.passes = PracticeProgress.passes(songID: song.id)
-        let lo = max(21, ((song.lowestPitch - 2) / 12) * 12)
-        var hi = min(108, ((song.highestPitch + 2) / 12) * 12 + 11)
-        if hi - lo < 35 { hi = min(108, lo + 35) }
+        // Show only the keys the song uses (plus a small margin) so every key is as wide as possible.
+        var lo = max(21, song.lowestPitch - 2)
+        var hi = min(108, song.highestPitch + 2)
+        while hi - lo < 23 {
+            if lo > 21 { lo -= 1 }
+            if hi - lo < 23, hi < 108 { hi += 1 }
+        }
         self.keyRange = lo...hi
         if song.category == .exercise { speed = 0.8 }
         rebuildChords()
-        seek(-leadIn)
+        // Park just before the first note so the opening keys are visible before Play.
+        seek(-0.6)
     }
 
     // MARK: - Derived
@@ -99,6 +113,8 @@ final class PracticeEngine {
     func play() {
         guard !isPlaying else { return }
         if time >= loopRange.end - 0.01 { restartLoop() }
+        // Starting at the top of the loop: back up for a 3 · 2 · 1 count-in.
+        if time > loopRange.start - leadIn, time <= loopRange.start + 0.01 { seek(loopRange.start - leadIn) }
         isPlaying = true
         lastTimestamp = 0
         let link = CADisplayLink(target: DisplayLinkProxy { [weak self] link in self?.tick(link) },
@@ -123,7 +139,8 @@ final class PracticeEngine {
     }
 
     func restartLoop() {
-        seek(loopRange.start - leadIn)
+        // While paused, park close so the first notes are in view; Play adds the count-in.
+        seek(loopRange.start - (isPlaying ? leadIn : 0.6))
     }
 
     /// Back up one chord (Wait for me) or two seconds (other modes) and try again.
@@ -249,6 +266,12 @@ final class PracticeEngine {
             }
         }
         time = target
+        if let count = countIn, count != lastCount {
+            // Soft tick for the count-in.
+            PianoSound.shared.noteOn(96, velocity: 45)
+            PianoSound.shared.noteOff(96)
+        }
+        lastCount = countIn
         autoPlay()
 
         if mode == .flow { countMisses() }

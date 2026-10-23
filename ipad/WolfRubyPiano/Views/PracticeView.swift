@@ -37,6 +37,7 @@ struct PracticeScreen: View {
 struct PracticeView: View {
     @Bindable var engine: PracticeEngine
     @Environment(\.dismiss) private var dismiss
+    @State private var lessonToPlay: Lesson?
     private let midi = MIDIInput.shared
     private let sound = PianoSound.shared
 
@@ -59,6 +60,7 @@ struct PracticeView: View {
         }
         .background(Brand.canvas)
         .onAppear(perform: connectInput)
+        .sheet(item: $lessonToPlay) { LessonPlayerSheet(lesson: $0) }
         .onDisappear {
             engine.stop()
             midi.onNoteOn = nil
@@ -109,6 +111,11 @@ struct PracticeView: View {
                 .disabled(engine.mode == .listen)
 
             speedControl
+
+            if let lesson = Lessons.forExercise(engine.song.id) {
+                Button { lessonToPlay = lesson } label: { Label("Watch how", systemImage: "play.rectangle") }
+                    .buttonStyle(CompactButtonStyle())
+            }
 
             Menu {
                 Toggle("iPad plays the other hand", isOn: $engine.accompany)
@@ -241,6 +248,20 @@ struct PracticeView: View {
                         .foregroundStyle(Brand.ink)
                         .padding(.horizontal, 16).padding(.vertical, 10)
                         .panel()
+                }
+                if let count = engine.countIn {
+                    VStack(spacing: 2) {
+                        Text("\(count)")
+                            .font(Brand.font(64, .heavy))
+                            .foregroundStyle(Brand.gold)
+                            .contentTransition(.numericText(countsDown: true))
+                        Text("Hands on the lit keys")
+                            .font(Brand.font(14, .semibold))
+                            .foregroundStyle(Brand.inkDim)
+                    }
+                    .padding(.horizontal, 28).padding(.vertical, 12)
+                    .panel()
+                    .animation(.easeOut(duration: 0.18), value: count)
                 }
                 if engine.mode == .wait, engine.isWaiting {
                     Text("Your turn — play the outlined keys")

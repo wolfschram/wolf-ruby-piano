@@ -16,6 +16,8 @@ struct FallingNotesView: View {
         let loop = engine.loopRange
         let hasLoop = engine.selectedPhrase != nil
         let waiting = engine.isWaiting
+        let bars = engine.song.bars
+        let showNames = engine.showNoteNames
 
         Canvas { ctx, size in
             let h = size.height
@@ -26,6 +28,17 @@ struct FallingNotesView: View {
                 let x = layout.frame(of: pitch).x
                 ctx.fill(Path(CGRect(x: x, y: 0, width: 1, height: h)),
                          with: .color(Brand.ink.opacity(pitch % 12 == 0 ? 0.09 : 0.04)))
+            }
+
+            // Bar lines with bar numbers, so the eye can feel the beat coming.
+            for (index, bar) in bars.enumerated() where bar > t - 0.1 && bar < t + lookahead {
+                let by = y(bar)
+                var dash = Path()
+                dash.move(to: CGPoint(x: 0, y: by))
+                dash.addLine(to: CGPoint(x: size.width, y: by))
+                ctx.stroke(dash, with: .color(Brand.ink.opacity(0.16)), style: StrokeStyle(lineWidth: 1, dash: [6, 6]))
+                ctx.draw(Text("\(index + 1)").font(Brand.mono(11, .medium)).foregroundStyle(Brand.inkFaint),
+                         at: CGPoint(x: 6, y: by - 8), anchor: .leading)
             }
 
             // Loop end marker.
@@ -58,9 +71,19 @@ struct FallingNotesView: View {
                 if next.contains(note.id) {
                     ctx.stroke(path, with: .color(Brand.ink), lineWidth: waiting ? 3 : 2)
                 }
-                if active, let finger = note.finger, rect.height >= 20, f.width >= 16 {
+                guard active, f.width >= 14 else { continue }
+                // Note name at the bottom of the bar (where it lands), finger number above it.
+                var labelBottom = rect.maxY - 4
+                if showNames, rect.height >= 18 {
+                    let size = min(15, f.width * 0.55)
+                    ctx.draw(Text(NoteName.name(note.pitch)).font(Brand.font(size, .bold))
+                                .foregroundStyle(Brand.canvas.opacity(0.85)),
+                             at: CGPoint(x: rect.midX, y: labelBottom), anchor: .bottom)
+                    labelBottom -= size + 4
+                }
+                if let finger = note.finger, labelBottom - rect.minY >= 20 {
                     let r = min(11, f.width / 2 - 2)
-                    let c = CGPoint(x: rect.midX, y: rect.maxY - r - 4)
+                    let c = CGPoint(x: rect.midX, y: labelBottom - r)
                     ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
                              with: .color(Brand.canvas.opacity(0.85)))
                     ctx.draw(Text("\(finger)").font(Brand.font(r * 1.25, .bold)).foregroundStyle(color), at: c)
