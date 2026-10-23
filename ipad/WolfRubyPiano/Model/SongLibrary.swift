@@ -53,8 +53,11 @@ final class SongLibrary {
         for url in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
         where ["mid", "midi"].contains(url.pathExtension.lowercased()) {
             let name = url.deletingPathExtension().lastPathComponent
-            list.append(SongEntry(id: "import-" + name, title: name.replacingOccurrences(of: "-", with: " "),
-                                  artist: "Imported", category: .imported, difficulty: 3, source: .imported(url)))
+            let isRecording = name.hasPrefix(Self.recordingPrefix)
+            let title = isRecording ? String(name.dropFirst(Self.recordingPrefix.count)) : name.replacingOccurrences(of: "-", with: " ")
+            list.append(SongEntry(id: "import-" + name, title: title,
+                                  artist: isRecording ? "Your recording" : "Imported", category: .imported,
+                                  difficulty: 3, source: .imported(url)))
         }
         for i in list.indices {
             if let url = fileURL(list[i].source), let data = try? Data(contentsOf: url),
@@ -93,6 +96,33 @@ final class SongLibrary {
         let target = importFolder.appendingPathComponent(url.lastPathComponent)
         try? FileManager.default.removeItem(at: target)
         try data.write(to: target)
+        reload()
+    }
+
+    /// Files saved from the Record screen start with this, so they show as "Your recording".
+    static let recordingPrefix = "rec_"
+
+    /// Saves a recording from the piano as a song. Returns the new library entry.
+    @discardableResult
+    func saveRecording(_ data: Data, title: String) throws -> SongEntry? {
+        _ = try MIDIFileParser.parse(data)
+        let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        let name = Self.recordingPrefix + (clean.isEmpty ? "My recording" : clean)
+        let target = importFolder.appendingPathComponent(name + ".mid")
+        try? FileManager.default.removeItem(at: target)
+        try data.write(to: target)
+        cache["import-" + name] = nil
+        reload()
+        return entries.first { $0.id == "import-" + name }
+    }
+
+    /// Removes an imported song or recording from the iPad.
+    func delete(_ entry: SongEntry) {
+        guard case .imported(let url) = entry.source else { return }
+        try? FileManager.default.removeItem(at: url)
+        cache[entry.id] = nil
+        PracticeProgress.reset(songID: entry.id)
         reload()
     }
 

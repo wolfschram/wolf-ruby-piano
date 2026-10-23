@@ -32,6 +32,14 @@ struct HomeView: View {
     @State private var importError: String?
     @State private var playingLesson: Lesson?
     @State private var showingKeys = false
+    @State private var recording: RecordRequest?
+
+    private struct RecordRequest: Identifiable {
+        let id = UUID()
+        let title: String
+    }
+
+    private func openRecorder(_ title: String) { recording = RecordRequest(title: title) }
     @State private var featuredPhrases: (total: Int, mastered: Int)?
     private let library = SongLibrary.shared
     private let midi = MIDIInput.shared
@@ -46,7 +54,7 @@ struct HomeView: View {
                     fingerGym
                     songShelf(title: "Film & classical", subtitle: "Piano pieces to grow into",
                               theme: .film, entries: library.entries(in: .wolf))
-                    songShelf(title: "Your imported songs", subtitle: "Added with Import MIDI",
+                    songShelf(title: "Your songs", subtitle: "Your recordings and imported MIDI · press and hold to delete",
                               theme: .mine, entries: library.entries(in: .imported))
                     rubyWorld
                 }
@@ -69,6 +77,9 @@ struct HomeView: View {
         }
         .sheet(item: $playingLesson) { LessonPlayerSheet(lesson: $0) }
         .sheet(isPresented: $showingKeys) { PianoKeySettingsView() }
+        .fullScreenCover(item: $recording) { request in
+            RecordView(suggestedTitle: request.title) { entry in path.append(entry) }
+        }
         .alert("Import failed", isPresented: .constant(importError != nil)) {
             Button("OK") { importError = nil }
         } message: {
@@ -104,6 +115,8 @@ struct HomeView: View {
             case .failed: Button("Retry sound") { sound.start() }.buttonStyle(CompactButtonStyle())
             default: EmptyView()
             }
+            Button { openRecorder("") } label: { Label("Record", systemImage: "record.circle") }
+                .buttonStyle(CompactButtonStyle())
             Button { showingKeys = true } label: { Label("Piano keys", systemImage: "pianokeys") }
                 .buttonStyle(CompactButtonStyle())
             Button { pairing = true } label: { Label("Bluetooth", systemImage: "dot.radiowaves.left.and.right") }
@@ -156,11 +169,17 @@ struct HomeView: View {
             }
             Spacer(minLength: 12)
             if let entry {
-                Button { path.append(entry) } label: {
-                    Label(featuredPhrases?.mastered ?? 0 > 0 ? "Continue" : "Start", systemImage: "play.fill")
-                        .frame(minWidth: 110)
+                VStack(alignment: .trailing, spacing: 8) {
+                    Button { path.append(entry) } label: {
+                        Label(featuredPhrases?.mastered ?? 0 > 0 ? "Continue" : "Start", systemImage: "play.fill")
+                            .frame(minWidth: 110)
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    Button { openRecorder("Once Upon a Time in the West") } label: {
+                        Label("Record your version", systemImage: "record.circle")
+                    }
+                    .buttonStyle(CompactButtonStyle())
                 }
-                .buttonStyle(PrimaryButtonStyle())
             } else {
                 VStack(alignment: .trailing, spacing: 8) {
                     Button { importing = true } label: {
@@ -211,6 +230,13 @@ struct HomeView: View {
                     ForEach(shown) { entry in
                         Button { path.append(entry) } label: { SongTile(entry: entry, theme: theme, symbol: nil) }
                             .buttonStyle(.plain)
+                            .contextMenu {
+                                if entry.category == .imported {
+                                    Button(role: .destructive) { library.delete(entry) } label: {
+                                        Label("Delete from iPad", systemImage: "trash")
+                                    }
+                                }
+                            }
                     }
                 }
             }

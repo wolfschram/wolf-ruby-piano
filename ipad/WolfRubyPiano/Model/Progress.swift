@@ -18,6 +18,10 @@ enum PracticeProgress {
                                   forKey: key(songID))
     }
 
+    static func reset(songID: String) {
+        UserDefaults.standard.removeObject(forKey: key(songID))
+    }
+
     static func masteredCount(songID: String) -> Int {
         passes(songID: songID).values.filter { $0 >= passesToMaster }.count
     }
