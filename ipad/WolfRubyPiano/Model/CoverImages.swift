@@ -34,5 +34,10 @@ enum CoverImages {
         "ex-hanon-1": CoverImage(url: URL(string: "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f0/Yamaha_piano_player_%28Unsplash%29.jpg/960px-Yamaha_piano_player_%28Unsplash%29.jpg")!, credit: "Pianist at a Yamaha · Gabriel Gurrola gabrielgurrola, CC0, Wikimedia Commons"),
         "ex-triads": CoverImage(url: URL(string: "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/48/Piano_C_Major_7_Chord.jpg/960px-Piano_C_Major_7_Chord.jpg")!, credit: "A chord under the hand · Peter Placzek, CC0, Wikimedia Commons"),
         "default-piano": CoverImage(url: URL(string: "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/90/Boesendorfer-5075415.jpg/960px-Boesendorfer-5075415.jpg")!, credit: "Bösendorfer grand piano · ermell, CC BY-SA 3.0, Wikimedia Commons"),
+        // Once Upon a Time in the West soundtrack
+        "once-upon-a-time-in-the-west-main-theme": CoverImage(url: URL(string: "https://upload.wikimedia.org/wikipedia/en/a/a2/Once_upon_a_Time_in_the_West.jpg")!, credit: "Once Upon a Time in the West film poster (Wikipedia)"),
+        "man-with-a-harmonica": CoverImage(url: URL(string: "https://upload.wikimedia.org/wikipedia/en/a/a2/Once_upon_a_Time_in_the_West.jpg")!, credit: "Once Upon a Time in the West film poster (Wikipedia)"),
+        "farewell-to-cheyenne": CoverImage(url: URL(string: "https://upload.wikimedia.org/wikipedia/en/a/a2/Once_upon_a_Time_in_the_West.jpg")!, credit: "Once Upon a Time in the West film poster (Wikipedia)"),
+        "once-upon-a-time-in-the-west-piano": CoverImage(url: URL(string: "https://upload.wikimedia.org/wikipedia/en/a/a2/Once_upon_a_Time_in_the_West.jpg")!, credit: "Once Upon a Time in the West film poster (Wikipedia)"),
     ]
 }

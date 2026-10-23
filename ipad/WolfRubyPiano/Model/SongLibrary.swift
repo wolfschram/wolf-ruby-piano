@@ -81,7 +81,7 @@ final class SongLibrary {
     /// otherwise the built-in two-hand arrangement made from the film score's melody and harmony.
     var featured: SongEntry? {
         entries.first { $0.category == .imported && $0.title.lowercased().contains("west") && !$0.isBandArrangement }
-            ?? entries.first { $0.id == "once-upon-a-time-in-the-west-piano" }
+            ?? entries.first { $0.id == "once-upon-a-time-in-the-west-main-theme" }
     }
 
     /// Copies a picked .mid file into the app so it stays available.

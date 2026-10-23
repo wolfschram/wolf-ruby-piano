@@ -1,8 +1,29 @@
 [
  {
+  "file": "once-upon-a-time-in-the-west-main-theme.mid",
+  "title": "Once Upon a Time in the West · Main theme",
+  "artist": "Ennio Morricone · full cue for piano",
+  "difficulty": 3,
+  "category": "wolf"
+ },
+ {
+  "file": "man-with-a-harmonica.mid",
+  "title": "Man with a Harmonica",
+  "artist": "Ennio Morricone · Once Upon a Time in the West",
+  "difficulty": 2,
+  "category": "wolf"
+ },
+ {
+  "file": "farewell-to-cheyenne.mid",
+  "title": "Farewell to Cheyenne",
+  "artist": "Ennio Morricone · Once Upon a Time in the West",
+  "difficulty": 2,
+  "category": "wolf"
+ },
+ {
   "file": "once-upon-a-time-in-the-west-piano.mid",
-  "title": "Once Upon a Time in the West",
-  "artist": "Ennio Morricone · piano arrangement",
+  "title": "Once Upon a Time in the West · Short version",
+  "artist": "Ennio Morricone · theme only, simplified",
   "difficulty": 2,
   "category": "wolf"
  },
