@@ -303,7 +303,7 @@ private struct SongTile: View {
         let mastered = PracticeProgress.masteredCount(songID: entry.id)
         VStack(alignment: .leading, spacing: 0) {
             Group {
-                if let cover = CoverImages.bySongID[entry.id] {
+                if let cover = CoverImages.bySongID[entry.id] ?? CoverImages.bySongID["default-piano"] {
                     AsyncImage(url: cover.url, transaction: Transaction(animation: .easeOut(duration: 0.26))) { phase in
                         if let image = phase.image {
                             image.resizable().aspectRatio(contentMode: .fill)
