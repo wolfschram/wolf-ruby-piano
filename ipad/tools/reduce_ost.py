@@ -52,7 +52,7 @@ def read_midi(path):
     return div, tracks
 
 
-def reduce(path, lead, bass, fill, grid, tempo, meter, transpose_lead=0, beats_per_bar=None):
+def reduce(path, lead, bass, fill, grid, tempo, meter, transpose_lead=0, beats_per_bar=None, max_rest_bars=None):
     """lead: function(bar) -> track numbers carrying the tune; grid: fraction of a beat to snap to."""
     div, tracks = read_midi(path)
     q = max(1, int(div * grid))
@@ -102,7 +102,50 @@ def reduce(path, lead, bass, fill, grid, tempo, meter, transpose_lead=0, beats_p
                 out.append((s, e, a))
         return out
 
-    return div, tidy(rh), tidy(lh), tempo, meter
+    rh, lh = tidy(rh), tidy(lh)
+    # A piano note fades anyway; cap held notes at two bars so the falling notes stay readable.
+    rh = [(s, min(e, s + 2 * bar_len), a) for s, e, a in rh]
+    lh = [(s, min(e, s + 2 * bar_len), a) for s, e, a in lh]
+    if max_rest_bars is not None:
+        rh, lh = close_gaps(rh, lh, bar_len, max_rest_bars)
+    return div, rh, lh, tempo, meter
+
+
+def close_gaps(rh, lh, bar_len, max_rest_bars):
+    """Where the tune rests longer than max_rest_bars, cut out whole empty bars so the next phrase
+    comes in sooner. Whole bars only, so the beat and bar lines stay even."""
+    starts = sorted({s for s, e, a in rh})
+    cuts = []   # (from_tick, length) removed from the timeline
+    for a, b in zip(starts, starts[1:]):
+        # Only bars strictly between the last note's bar and the next note's bar can go.
+        spare = (b // bar_len) - (a // bar_len) - 1 - max_rest_bars
+        if spare > 0:
+            # Keep the first max_rest_bars after the last melody note, drop the bars after that.
+            from_bar = (a // bar_len) + max_rest_bars + 1
+            cuts.append((from_bar * bar_len, spare * bar_len))
+
+    def move(t):
+        shift = 0
+        for start, length in cuts:
+            if t >= start + length:
+                shift += length
+            elif t >= start:
+                return None   # inside a removed stretch
+        return t - shift
+
+    def apply(ns):
+        out = []
+        for s, e, a in ns:
+            s2 = move(s)
+            if s2 is None:
+                continue
+            e2 = move(e)
+            if e2 is None:   # note ran into a removed stretch: end it where the cut starts
+                e2 = move(max(c[0] for c in cuts if c[0] <= e)) or s2 + 1
+            out.append((s2, max(e2, s2 + 1), a))
+        return out
+
+    return apply(rh), apply(lh)
 
 
 def write_midi(path, div, rh, lh, tempo, meter):
@@ -144,10 +187,10 @@ if __name__ == '__main__':
     pieces = [
         # Same sequence found three times; two copies say 121 bpm.
         ('once-upon-a-time-in-the-west-main-theme.mid', 'main-theme__midis101__4827.mid',
-         dict(lead=main_theme_lead, bass=[1, 10, 4], fill=[8, 12, 2, 4], grid=1 / 4, tempo=121, meter=(3, 4))),
+         dict(lead=main_theme_lead, bass=[1, 10, 4], fill=[8, 12, 2, 4], grid=1 / 4, tempo=121, meter=(3, 4), max_rest_bars=0)),
         # Harmonica wail + brass riff on top, bass guitar and piano chords below.
         ('man-with-a-harmonica.mid', 'man-with-harmonica__bitmidi__102588.mid',
-         dict(lead=lambda b: [1, 7], bass=[2], fill=[10, 3], grid=1 / 4, tempo=57, meter=(4, 4))),
+         dict(lead=lambda b: [1, 7], bass=[2], fill=[10, 3], grid=1 / 4, tempo=57, meter=(4, 4), max_rest_bars=0)),
         # Whistle melody (an octave down) on a swung triplet grid; both sources agree on the notes.
         ('farewell-to-cheyenne.mid', 'cheyenne__midis101__4830.mid',
          dict(lead=lambda b: [1], bass=[7], fill=[3, 4, 2], grid=1 / 3, tempo=88, meter=(4, 4), transpose_lead=-12)),
